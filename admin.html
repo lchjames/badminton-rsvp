@@ -9,26 +9,68 @@
 <body>
 <header class="container">
   <h1>YR Badminton 管理員</h1>
+  <p class="muted">管理場次（新增/編輯/開關/刪除）與預約（刪除/編輯）。</p>
   <p class="muted"><a href="index.html">返回登記頁</a></p>
 </header>
 
 <main class="container">
   <section class="card">
     <h2>Admin Key</h2>
-    <input id="adminKey" placeholder="Admin Key" />
+    <input id="adminKey" placeholder="輸入 Admin Key" autocomplete="off" />
+    <div class="row" style="margin-top:8px;">
+      <button id="btnLoad" style="width:auto;">載入資料</button>
+      <button id="btnSaveAll" style="width:auto;background:#2b2b2b;">儲存所有已修改</button>
+    </div>
+    <p id="topMsg" class="muted"></p>
   </section>
 
   <section class="card">
-    <h2>建立下一個星期日（17:00–19:00）</h2>
-    <label>球場</label>
-    <input id="venue" value="Goodminton" />
-    <button id="createNext">建立</button>
-    <p id="msg" class="muted"></p>
+    <h2>快速建立：下一個星期日（17:00–19:00）</h2>
+    <div class="grid2">
+      <div>
+        <label>球場</label>
+        <input id="nextVenue" value="Goodminton" />
+      </div>
+      <div>
+        <label>上限</label>
+        <input id="nextCap" type="number" min="1" value="20" />
+      </div>
+    </div>
+    <label style="margin-top:10px;">備註（可選）</label>
+    <input id="nextNote" placeholder="例如：改場 / 改時間" />
+    <div class="row" style="margin-top:8px;">
+      <button id="btnCreateNext" style="width:auto;">建立並設為唯一開放</button>
+    </div>
+    <p id="createMsg" class="muted"></p>
   </section>
 
   <section class="card">
-    <h2>現有場次</h2>
-    <div id="sessionTable"></div>
+    <h2>場次列表（可直接編輯）</h2>
+    <div class="row" style="margin-bottom:10px;">
+      <label class="chip"><input type="checkbox" id="showClosed"> 顯示已關閉</label>
+    </div>
+    <div id="sessionsTable"></div>
+    <p class="muted">提示：建議每次只保留 1 個 isOpen=TRUE，避免隊員揀錯。</p>
+  </section>
+
+  <section class="card">
+    <h2>預約列表（Bookings / RSVPs）</h2>
+    <div class="grid2">
+      <div>
+        <label>選擇場次</label>
+        <select id="rsvpSession"></select>
+      </div>
+      <div>
+        <label>顯示</label>
+        <select id="rsvpFilter">
+          <option value="ALL">全部</option>
+          <option value="YES">只顯示出席</option>
+          <option value="NO">只顯示缺席</option>
+        </select>
+      </div>
+    </div>
+    <div id="rsvpsTable" style="margin-top:12px;"></div>
+    <p class="muted">刪除會直接移除該行資料（不可復原）。</p>
   </section>
 </main>
 
