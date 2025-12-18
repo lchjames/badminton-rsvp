@@ -318,7 +318,7 @@ function buildAnnouncementText_(s, yesCount, link, lang) {
     link ? "" : null,
     link ? `🔗 登記：${link}` : null,
     "",
-    "請大家盡早登記：出席 / 缺席（「可能」唔係選項）",
+    "請大家盡早登記：出席 / 缺席",
   ].filter(Boolean);
 
   const linesEN = [
@@ -332,7 +332,7 @@ function buildAnnouncementText_(s, yesCount, link, lang) {
     link ? "" : null,
     link ? `🔗 RSVP: ${link}` : null,
     "",
-    "Please RSVP early: Yes / No (Maybe is not an option)",
+    "Please RSVP early: Yes / No",
   ].filter(Boolean);
 
   if (lang === "ZH") return linesZH.join("\n");
