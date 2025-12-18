@@ -1,1 +1,37 @@
-<!doctype html><title>BadYRminton Admin</title>
+<!doctype html>
+<html lang="zh-HK">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>YR Badminton 管理</title>
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+<header class="container">
+  <h1>YR Badminton 管理員</h1>
+  <p class="muted"><a href="index.html">返回登記頁</a></p>
+</header>
+
+<main class="container">
+  <section class="card">
+    <h2>Admin Key</h2>
+    <input id="adminKey" placeholder="Admin Key" />
+  </section>
+
+  <section class="card">
+    <h2>建立下一個星期日（17:00–19:00）</h2>
+    <label>球場</label>
+    <input id="venue" value="Goodminton" />
+    <button id="createNext">建立</button>
+    <p id="msg" class="muted"></p>
+  </section>
+
+  <section class="card">
+    <h2>現有場次</h2>
+    <div id="sessionTable"></div>
+  </section>
+</main>
+
+<script src="assets/admin.js"></script>
+</body>
+</html>
