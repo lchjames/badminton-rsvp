@@ -3,7 +3,7 @@ const DEFAULT_CAPACITY = 20;
 const PSYCHO_LINES = [
   "「可能」唔係選項，請揀出席或缺席。",
   "唔好薛定諤出席，隊友會多謝你。",
-  "BadYRminton 要清楚答案。"
+  "YR Badminton 要清楚答案。"
 ];
 
 const el = id => document.getElementById(id);
