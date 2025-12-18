@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-HK">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>BadYRminton 出席登記</title>
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+  <header class="container">
+    <h1>BadYRminton 出席登記</h1>
+    <p class="muted">請選場次並登記出席情況</p>
+  </header>
+
+  <main class="container">
+    <section class="card">
+      <h2>選擇場次</h2>
+      <select id="sessionSelect"></select>
+      <div id="sessionInfo" class="muted" style="margin-top:8px;"></div>
+    </section>
+
+    <section class="card" id="rsvpCard">
+      <h2>登記</h2>
+
+      <form id="rsvpForm" novalidate>
+        <label>姓名 / 暱稱</label>
+        <input id="name" required placeholder="例如：James" />
+
+        <label>狀態</label>
+        <div class="row">
+          <label class="chip"><input type="radio" name="status" value="YES" checked> 出席</label>
+          <label class="chip"><input type="radio" name="status" value="MAYBE"> 可能</label>
+          <label class="chip"><input type="radio" name="status" value="NO"> 缺席</label>
+        </div>
+
+        <div id="statusWarning" class="warning" style="display:none;"></div>
+
+        <label>人數</label>
+        <input id="pax" type="number" min="1" value="1" />
+
+        <label>備註（可選）</label>
+        <input id="note" placeholder="例如：會遲到 / 帶新手" />
+
+        <button type="submit" id="submitBtn">提交</button>
+        <p id="msg" class="muted"></p>
+      </form>
+    </section>
+
+    <section class="card">
+      <h2>目前出席名單</h2>
+      <div id="summary" class="muted"></div>
+      <div id="list"></div>
+    </section>
+  </main>
+
+  <script src="assets/app.js"></script>
+</body>
+</html>
