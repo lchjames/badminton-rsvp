@@ -2,75 +2,73 @@
 <html lang="zh-HK">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>YR Badminton 管理</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>YR Badminton Admin</title>
   <link rel="stylesheet" href="assets/style.css" />
 </head>
 <body>
 <header class="container">
-  <h1>YR Badminton 管理員</h1>
-  <p class="muted">管理場次（新增/編輯/開關/刪除）與預約（刪除/編輯）。</p>
-  <p class="muted"><a href="index.html">返回登記頁</a></p>
+  <h1>YR Badminton Admin</h1>
+  <div class="row">
+    <input id="adminKey" placeholder="Admin Key" style="flex:1;" />
+    <button id="btnLoad" style="width:auto;">載入 / Load</button>
+    <button id="btnSaveAll" class="alt" style="width:auto;">儲存所有修改</button>
+  </div>
+  <p id="topMsg" class="muted"></p>
 </header>
 
 <main class="container">
   <section class="card">
-    <h2>Admin Key</h2>
-    <input id="adminKey" placeholder="輸入 Admin Key" autocomplete="off" />
-    <div class="row" style="margin-top:8px;">
-      <button id="btnLoad" style="width:auto;">載入資料</button>
-      <button id="btnSaveAll" style="width:auto;background:#2b2b2b;">儲存所有已修改</button>
-    </div>
-    <p id="topMsg" class="muted"></p>
-  </section>
+    <h2>📢 公告文字（Copy & Paste）</h2>
 
-  <section class="card">
-    <h2>快速建立：下一個星期日（17:00–19:00）</h2>
     <div class="grid2">
       <div>
-        <label>球場</label>
-        <input id="nextVenue" value="Goodminton" />
+        <label>選擇場次<br><span class="muted">Session</span></label>
+        <select id="announceSession"></select>
       </div>
+
       <div>
-        <label>上限</label>
-        <input id="nextCap" type="number" min="1" value="20" />
+        <label>語言<br><span class="muted">Language</span></label>
+        <select id="announceLang">
+          <option value="BILINGUAL" selected>中文 + English</option>
+          <option value="ZH">只中文</option>
+          <option value="EN">English only</option>
+        </select>
       </div>
     </div>
-    <label style="margin-top:10px;">備註（可選）</label>
-    <input id="nextNote" placeholder="例如：改場 / 改時間" />
-    <div class="row" style="margin-top:8px;">
-      <button id="btnCreateNext" style="width:auto;">建立並設為唯一開放</button>
+
+    <label style="margin-top:12px;">RSVP 連結（可選）<br><span class="muted">Optional RSVP link</span></label>
+    <input id="announceLink" placeholder="https://lchjames.github.io/badminton-rsvp/" />
+
+    <div class="row" style="margin-top:10px;">
+      <button id="btnGenAnnouncement" style="width:auto;">生成公告</button>
+      <button id="btnCopyAnnouncement" class="alt" style="width:auto;">複製到剪貼簿</button>
     </div>
-    <p id="createMsg" class="muted"></p>
+
+    <label style="margin-top:12px;">公告內容<br><span class="muted">Announcement text</span></label>
+    <textarea id="announceText" rows="10" placeholder="按「生成公告」後會出現文字"></textarea>
+
+    <p id="announceMsg" class="muted"></p>
   </section>
 
   <section class="card">
     <h2>場次列表（可直接編輯）</h2>
-    <div class="row" style="margin-bottom:10px;">
-      <label class="chip"><input type="checkbox" id="showClosed"> 顯示已關閉</label>
-    </div>
+    <label class="chip"><input type="checkbox" id="showClosed"> 顯示已關閉 / Show closed</label>
     <div id="sessionsTable"></div>
     <p class="muted">提示：建議每次只保留 1 個 isOpen=TRUE，避免隊員揀錯。</p>
   </section>
 
   <section class="card">
-    <h2>預約列表（Bookings / RSVPs）</h2>
-    <div class="grid2">
-      <div>
-        <label>選擇場次</label>
-        <select id="rsvpSession"></select>
-      </div>
-      <div>
-        <label>顯示</label>
-        <select id="rsvpFilter">
-          <option value="ALL">全部</option>
-          <option value="YES">只顯示出席</option>
-          <option value="NO">只顯示缺席</option>
-        </select>
-      </div>
+    <h2>Bookings</h2>
+    <div class="row">
+      <select id="rsvpSession" style="flex:1;"></select>
+      <select id="rsvpFilter" style="width:auto;">
+        <option value="ALL">ALL</option>
+        <option value="YES">YES</option>
+        <option value="NO">NO</option>
+      </select>
     </div>
-    <div id="rsvpsTable" style="margin-top:12px;"></div>
-    <p class="muted">刪除會直接移除該行資料（不可復原）。</p>
+    <div id="rsvpsTable" style="margin-top:10px;"></div>
   </section>
 </main>
 

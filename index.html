@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>YR Badminton 出席登記</title>
+  <title>YR Badminton RSVP</title>
   <link rel="stylesheet" href="assets/style.css" />
 </head>
 <body>
@@ -25,7 +25,7 @@
 
     <form id="rsvpForm" novalidate>
       <label>姓名 / 暱稱<br><span class="muted">Name / Nickname</span></label>
-      <input id="name" required placeholder="例如：James" autocomplete="name" />
+      <input id="name" required placeholder="Name / Nickname (e.g. James)" autocomplete="name" />
 
       <label>狀態<br><span class="muted">Status</span></label>
       <div class="row">
@@ -36,13 +36,18 @@
 
       <div id="statusWarning" class="warning" style="display:none;"></div>
 
-      <label>人數<br><span class="muted">Players</span></label>
+      <label>人數<br><span class="muted">Number of players</span></label>
       <input id="pax" type="number" min="1" value="1" inputmode="numeric" />
 
       <label>備註（可選）<br><span class="muted">Note (optional)</span></label>
-      <input id="note" placeholder="例如：會遲到 / 帶新手 | e.g. Late / bringing a newbie" />
+      <input id="note" placeholder="e.g. Late / bringing a friend" />
 
-      <button type="submit" id="submitBtn">提交 / Submit</button>
+      <div class="row" style="margin-top:12px;">
+        <button type="submit" id="submitBtn" style="flex:1;">提交 / Update</button>
+        <button type="button" id="cancelBtn" class="alt" style="flex:1;">取消出席 / Cancel</button>
+      </div>
+
+      <p id="existingInfo" class="muted" style="margin-top:10px;"></p>
       <p id="msg" class="muted" style="margin-top:10px;"></p>
     </form>
   </section>
