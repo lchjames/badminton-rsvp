@@ -1,34 +1,258 @@
+// 1) 改成你部署好嘅 Apps Script Web App URL
 const API_BASE = "https://script.google.com/macros/s/AKfycbwv5Db3ePyGuiTDOGFDM8joTprsOmL3xpymGPVOv3ocaPeTb-QTEPySqafNxY_LhJwm/exec";
+
+// 預設上限（若 sessions 表無填 capacity，就用 20）
 const DEFAULT_CAPACITY = 20;
+
+// 心理戰文案池（揀「可能」時輪流用）
 const PSYCHO_LINES = [
-  "「可能」唔係選項，請揀出席或缺席。",
-  "唔好薛定諤出席，隊友會多謝你。",
-  "YR Badminton 要清楚答案。"
+  "「可能」唔係選項。唔好做薛定諤出席，請揀「出席」或「缺席」。",
+  "YR Badminton 規矩：要就要，唔要就唔要。「可能」會令我哋訂場/分隊崩潰。",
+  "你啱啱揀咗「可能」。系統已記低你嘅猶豫（講笑）。請揀返 YES / NO。",
+  "「可能」= 令全隊難做。你肯定係好人，所以請揀返「出席」或「缺席」。"
 ];
 
-const el = id => document.getElementById(id);
+// 心理戰：揀「可能」後，按鈕冷卻（ms）
+const MAYBE_COOLDOWN_MS = 900;
+
+const el = (id) => document.getElementById(id);
+
+let sessions = [];
+let currentSessionId = null;
 let psychoIdx = 0;
+let maybeCooldownTimer = null;
 
-function nextLine(){ return PSYCHO_LINES[psychoIdx++ % PSYCHO_LINES.length]; }
+async function apiGet(params) {
+  const url = `${API_BASE}?${new URLSearchParams(params).toString()}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("GET failed");
+  return res.json();
+}
 
-document.querySelectorAll('input[name="status"]').forEach(r => {
-  r.addEventListener('change', e => {
-    if (e.target.value === 'MAYBE') {
-      el('statusWarning').style.display='block';
-      el('statusWarning').innerText = nextLine();
-      el('rsvpCard').classList.add('shake');
-    } else {
-      el('statusWarning').style.display='none';
-    }
+async function apiPost(payload) {
+  const res = await fetch(API_BASE, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
+    body: JSON.stringify(payload),
   });
-});
+  if (!res.ok) throw new Error("POST failed");
+  return res.json();
+}
 
-el('rsvpForm').addEventListener('submit', e => {
-  e.preventDefault();
-  const status = document.querySelector('input[name="status"]:checked').value;
-  if (status === 'MAYBE') {
-    alert('「可能」唔係選項');
+function escapeHtml(s="") {
+  return s.replace(/[&<>"']/g, (c)=>({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;" }[c]));
+}
+
+function showMsg(text) {
+  el("msg").textContent = text || "";
+}
+
+function setWarning(text) {
+  const w = el("statusWarning");
+  if (!text) {
+    w.style.display = "none";
+    w.textContent = "";
     return;
   }
-  alert('Demo version – wire API_BASE to enable submit');
-});
+  w.style.display = "block";
+  w.textContent = text;
+}
+
+function nextPsychoLine() {
+  const line = PSYCHO_LINES[psychoIdx % PSYCHO_LINES.length];
+  psychoIdx += 1;
+  return line;
+}
+
+function shakeCard() {
+  const card = el("rsvpCard");
+  card.classList.remove("shake");
+  void card.offsetWidth;
+  card.classList.add("shake");
+
+  card.classList.add("glow-warn");
+  window.setTimeout(() => card.classList.remove("glow-warn"), 900);
+}
+
+function setSubmitCooldown(ms) {
+  const btn = el("submitBtn");
+  btn.disabled = true;
+  btn.classList.add("btn-cooldown");
+
+  if (maybeCooldownTimer) window.clearTimeout(maybeCooldownTimer);
+  maybeCooldownTimer = window.setTimeout(() => {
+    btn.disabled = false;
+    btn.classList.remove("btn-cooldown");
+  }, ms);
+}
+
+function renderSessionInfo(s) {
+  const cap = (Number(s.capacity) || DEFAULT_CAPACITY);
+  el("sessionInfo").textContent =
+    `${s.date} ${s.start}-${s.end} ｜ ${s.venue}` +
+    ` ｜ 上限：${cap}` +
+    (s.note ? ` ｜ ${s.note}` : "");
+}
+
+function renderList(rsvps) {
+  // 同名同場：以最後一筆為準
+  const byName = new Map();
+  for (const r of rsvps) byName.set((r.name || "").trim(), r);
+
+  const rows = Array.from(byName.values());
+
+  // 只顯示 YES（不顯示 NO / MAYBE）
+  const yes = rows.filter(x => x.status === "YES");
+  const sumYes = yes.reduce((a,b)=>a+(Number(b.pax)||1),0);
+
+  const s = sessions.find(x => x.sessionId === currentSessionId) || {};
+  const cap = (Number(s.capacity) || DEFAULT_CAPACITY);
+  const remaining = Math.max(0, cap - sumYes);
+
+  el("summary").innerHTML =
+    `出席：<b>${sumYes}</b> / ${cap} ｜ 尚餘名額：<b>${remaining}</b>`;
+
+  const items = yes
+    .sort((a,b)=> (b.timestamp||"").localeCompare(a.timestamp||""))
+    .map(r => `
+      <div class="item">
+        <b>${escapeHtml(r.name)}</b>（${Number(r.pax)||1}）
+        ${r.note ? `<div class="muted">${escapeHtml(r.note)}</div>` : ""}
+      </div>
+    `).join("");
+
+  el("list").innerHTML = items || `<div class="muted">暫時未有人出席</div>`;
+}
+
+async function loadSessions() {
+  const data = await apiGet({ action: "sessions" });
+  sessions = data.sessions || [];
+
+  const openSessions = sessions.filter(x => x.isOpen);
+  const select = el("sessionSelect");
+  select.innerHTML = "";
+
+  if (openSessions.length === 0) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "暫時無開放場次";
+    select.appendChild(opt);
+    currentSessionId = null;
+    el("sessionInfo").textContent = "";
+    return;
+  }
+
+  for (const s of openSessions) {
+    const opt = document.createElement("option");
+    opt.value = s.sessionId;
+    opt.textContent = `${s.title}（${s.date} ${s.start}）`;
+    select.appendChild(opt);
+  }
+
+  currentSessionId = select.value;
+  const s = sessions.find(x => x.sessionId === currentSessionId);
+  if (s) renderSessionInfo(s);
+}
+
+async function loadRsvps() {
+  if (!currentSessionId) {
+    el("summary").textContent = "";
+    el("list").innerHTML = `<div class="muted">未有開放場次</div>`;
+    return;
+  }
+  const data = await apiGet({ action: "list", sessionId: currentSessionId });
+  renderList(data.rsvps || []);
+}
+
+function wireStatusPsychowar() {
+  document.querySelectorAll('input[name="status"]').forEach(radio => {
+    radio.addEventListener("change", (e) => {
+      const v = e.target.value;
+
+      if (v === "MAYBE") {
+        setWarning(nextPsychoLine());
+        showMsg("提示：你揀咗「可能」，請改為「出席」或「缺席」。");
+        shakeCard();
+        setSubmitCooldown(MAYBE_COOLDOWN_MS);
+      } else {
+        setWarning("");
+      }
+    });
+  });
+}
+
+async function init() {
+  await loadSessions();
+  await loadRsvps();
+  wireStatusPsychowar();
+
+  el("sessionSelect").addEventListener("change", async (e) => {
+    currentSessionId = e.target.value;
+    const s = sessions.find(x => x.sessionId === currentSessionId);
+    if (s) renderSessionInfo(s);
+    setWarning("");
+    showMsg("");
+    await loadRsvps();
+  });
+
+  el("rsvpForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    showMsg("");
+
+    const btn = el("submitBtn");
+    btn.disabled = true;
+
+    try {
+      if (!currentSessionId) {
+        showMsg("暫時未有開放場次。");
+        shakeCard();
+        return;
+      }
+
+      const name = el("name").value.trim();
+      const pax = Number(el("pax").value || 1);
+      const note = el("note").value.trim();
+      const status = document.querySelector('input[name="status"]:checked')?.value;
+
+      if (!name) {
+        showMsg("請填寫姓名 / 暱稱。");
+        shakeCard();
+        return;
+      }
+
+      if (status === "MAYBE") {
+        setWarning(nextPsychoLine());
+        showMsg("「可能」唔係選項，請改為「出席」或「缺席」。");
+        shakeCard();
+        setSubmitCooldown(MAYBE_COOLDOWN_MS);
+        return;
+      }
+
+      if (!status || (status !== "YES" && status !== "NO")) {
+        showMsg("請選擇「出席」或「缺席」。");
+        shakeCard();
+        return;
+      }
+
+      const res = await apiPost({ action: "rsvp", sessionId: currentSessionId, name, status, pax, note });
+
+      if (!res?.ok) {
+        showMsg(`提交失敗：${res?.error || "未知錯誤"}`);
+        shakeCard();
+        return;
+      }
+
+      showMsg("已提交。");
+      setWarning("");
+      await loadRsvps();
+    } catch (err) {
+      console.error(err);
+      showMsg("提交失敗，請稍後再試。");
+      shakeCard();
+    } finally {
+      if (!btn.classList.contains("btn-cooldown")) btn.disabled = false;
+    }
+  });
+}
+
+init();
