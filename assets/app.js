@@ -1,4 +1,4 @@
-const API_BASE = "https://script.google.com/macros/s/AKfycbwv5Db3ePyGuiTDOGFDM8joTprsOmL3xpymGPVOv3ocaPeTb-QTEPySqafNxY_LhJwm/exec"; // .../exec
+const API_BASE = "https://script.google.com/macros/s/AKfycby6BM-TP-4EnP7usmJigxuUrWtsTeWw83oRYPHQPXhfIsRmLjhbisIMeVNOngQkr9uG/exec"; // .../exec
 const WAITLIST_LIMIT = 6;
 
 const PSYCHO_LINES = [
