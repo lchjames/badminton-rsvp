@@ -373,27 +373,41 @@ async function copyAnnounce_(){
 }
 
 
-function enforceSundayOnPicker_(){
-  const gs=document.getElementById("genStartDate");
-  if(!gs) return;
-  const d=parseISODate_(gs.value);
+
+
+function lockSundayOnly_(inputId, msgId){
+  const elx=document.getElementById(inputId);
+  if(!elx) return;
+  const val=elx.value;
+  const d=parseISODate_(val);
   if(!d) return;
 
-  // Force to the nearest upcoming Sunday (including today if already Sunday)
-  const day=d.getDay(); // 0=Sun ... 6=Sat
-  if(day===0) return;
+  // store previous valid value
+  const prev = elx.dataset.prevSunday || "";
 
-  const add=(7 - day) % 7;
-  const s=new Date(d.getTime());
-  s.setDate(s.getDate()+add);
-  gs.value = toISODate_(s);
-  setMsg("genMsg", "日期已自動調整為星期日 / Date auto-adjusted to Sunday.");
+  if(d.getDay() !== 0){
+    // reject non-Sunday
+    let newVal = prev;
+    if(!newVal){
+      // if no previous, jump to next Sunday
+      const add = (7 - d.getDay()) % 7;
+      const s = new Date(d.getTime());
+      s.setDate(s.getDate()+add);
+      newVal = toISODate_(s);
+    }
+    elx.value = newVal;
+    setMsg(msgId, "只可選擇星期日 / Sundays only.");
+    return;
+  }
+
+  // accept Sunday
+  elx.dataset.prevSunday = val;
 }
 
 function init(){
   const today = new Date().toISOString().split("T")[0];
   const nd = document.getElementById("newDate"); if(nd){ nd.setAttribute("min", today); nd.value = today; }
-  const gs = document.getElementById("genStartDate"); if(gs){ gs.setAttribute("min", today); gs.value = today; gs.addEventListener("input", ()=>enforceSundayOnPicker_()); gs.addEventListener("change", ()=>enforceSundayOnPicker_()); }
+  const gs = document.getElementById("genStartDate"); if(gs){ gs.setAttribute("min", today); gs.value = today; gs.dataset.prevSunday = gs.value; gs.addEventListener("input", ()=>lockSundayOnly_("genStartDate","genMsg")); gs.addEventListener("change", ()=>lockSundayOnly_("genStartDate","genMsg")); lockSundayOnly_("genStartDate","genMsg"); }
 
   el("btnLoad").addEventListener("click", async ()=>{
     try{
