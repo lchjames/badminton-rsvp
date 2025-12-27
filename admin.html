@@ -9,6 +9,7 @@
 <body>
 <header class="container">
   <h1>YR Badminton Admin</h1>
+  <p class="muted"><a href="index.html">← 返回登記頁 / Back to RSVP</a></p>
   <div class="row">
     <input id="adminKey" placeholder="Admin Key" style="flex:1;" />
     <button id="btnLoad" style="width:auto;">載入 / Load</button>
@@ -22,7 +23,7 @@
     <p class="muted">用嚟新增例外日期 / 例外球場，或者同一日新增第二個場（不同 Venue）。</p>
     <div class="grid2">
       <div><label>Title</label><input id="newTitle" value="YR Badminton" /></div>
-      <div><label>Date (YYYY-MM-DD)</label><input id="newDate" placeholder="2026-01-04" /></div>
+      <div><label>Date (YYYY-MM-DD)</label><input id="newDate" type="date" required /></div>
       <div><label>Start</label><input id="newStart" value="17:00" /></div>
       <div><label>End</label><input id="newEnd" value="19:00" /></div>
       <div><label>Venue (Court)</label><input id="newVenue" placeholder="Goodminton" /></div>
@@ -36,6 +37,29 @@
       <button id="btnCreateSession" style="width:auto;">建立場次 / Create</button>
     </div>
     <p id="createMsg" class="muted"></p>
+
+    <hr style="margin:14px 0; opacity:.25;">
+    <h3 style="margin:0 0 8px;">🗓️ 一鍵生成未來星期日（Every Sunday 17:00–19:00）</h3>
+    <p class="muted">快速建立未來 N 個星期日場次。第一個會設為 OPEN，其餘預設關閉。例外日期／例外球場請用上面「新增場次」。</p>
+    <div class="grid2">
+      <div><label>從哪一日開始（Sunday start date）</label><input id="genStartDate" type="date" /></div>
+      <div><label>生成幾多個星期（日）</label>
+        <select id="genWeeks">
+          <option value="4">4</option>
+          <option value="8" selected>8</option>
+          <option value="12">12</option>
+          <option value="16">16</option>
+        </select>
+      </div>
+      <div><label>預設球場 Venue</label><input id="genVenue" placeholder="Goodminton" /></div>
+      <div><label>Capacity</label><input id="genCap" type="number" min="1" value="20" /></div>
+    </div>
+    <div class="row" style="margin-top:10px;">
+      <label class="chip"><input type="checkbox" id="genOpenOnly"> 設為唯一開放（關閉其他場次）</label>
+      <button id="btnGenSundays" style="width:auto;">生成 / Generate</button>
+    </div>
+    <p id="genMsg" class="muted"></p>
+
   </section>
 
   <section class="card">

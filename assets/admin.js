@@ -181,7 +181,67 @@ async function loadRsvps(){
   `;
 }
 
+
+function toISODate_(d){
+  return d.toISOString().split("T")[0];
+}
+function parseISODate_(s){
+  const m=String(s||"").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if(!m) return null;
+  return new Date(Number(m[1]), Number(m[2])-1, Number(m[3]), 0,0,0,0);
+}
+function nextSunday_(fromDate){
+  const d=new Date(fromDate.getTime());
+  const day=d.getDay(); // 0=Sun
+  const add=(7 - day) % 7;
+  d.setDate(d.getDate()+add);
+  return d;
+}
+async function generateSundays_(){
+  const adminKey=ensureKey();
+  const startStr=el("genStartDate").value;
+  let start=parseISODate_(startStr);
+  if(!start) throw new Error("請填「從哪一日開始」日期");
+  start = nextSunday_(start);
+
+  const weeks = Number(el("genWeeks").value||8)||8;
+  const venue = (el("genVenue").value||"").trim();
+  if(!venue) throw new Error("請填預設 Venue");
+  const cap = Number(el("genCap").value||20)||20;
+  const openOnly = el("genOpenOnly").checked;
+
+  let created=0;
+  for(let i=0;i<weeks;i++){
+    const d=new Date(start.getTime());
+    d.setDate(d.getDate()+i*7);
+    const dateStr=toISODate_(d);
+
+    const session={
+      title:"YR Badminton",
+      date: dateStr,
+      start:"17:00",
+      end:"19:00",
+      venue: venue,
+      capacity: cap,
+      note:"",
+      isOpen: (i===0) ? true : false
+    };
+
+    const res=await apiPost({action:"admin_createSession", adminKey, session, openOnly: (openOnly && i===0)});
+    if(!res.ok) throw new Error(res.error||"create failed");
+    created += 1;
+  }
+
+  await loadSessions();
+  setMsg("genMsg", `已生成 ${created} 個星期日場次（第一個 OPEN，其餘關閉）。`);
+}
+
+
 function init(){
+  const today = new Date().toISOString().split("T")[0];
+  const nd = document.getElementById("newDate"); if(nd){ nd.setAttribute("min", today); nd.value = today; }
+  const gs = document.getElementById("genStartDate"); if(gs){ gs.setAttribute("min", today); gs.value = today; }
+
   el("btnLoad").addEventListener("click", async ()=>{
     try{
       ensureKey();
@@ -190,6 +250,8 @@ function init(){
     }catch(e){ setMsg("topMsg", e.message||String(e)); }
   });
   el("btnCreateSession").addEventListener("click", ()=>{ setMsg("createMsg",""); createSession().catch(e=>setMsg("createMsg", e.message||String(e))); });
+  const bg=document.getElementById("btnGenSundays");
+  if(bg){ bg.addEventListener("click", ()=>{ setMsg("genMsg",""); generateSundays_().catch(e=>setMsg("genMsg", e.message||String(e))); }); }
   el("showClosed").addEventListener("change", ()=>renderSessionsTable());
   el("btnLoadRsvps").addEventListener("click", ()=>loadRsvps().catch(e=>setMsg("topMsg", e.message||String(e))));
   el("rsvpFilter").addEventListener("change", ()=>loadRsvps().catch(()=>{}));
