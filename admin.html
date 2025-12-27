@@ -12,61 +12,49 @@
   <div class="row">
     <input id="adminKey" placeholder="Admin Key" style="flex:1;" />
     <button id="btnLoad" style="width:auto;">載入 / Load</button>
-    <button id="btnSaveAll" class="alt" style="width:auto;">儲存所有修改</button>
   </div>
   <p id="topMsg" class="muted"></p>
 </header>
 
 <main class="container">
   <section class="card">
-    <h2>📢 公告文字（Copy & Paste）</h2>
-
+    <h2>➕ 新增場次 / 新增球場（New Session / Court）</h2>
+    <p class="muted">用嚟新增例外日期 / 例外球場，或者同一日新增第二個場（不同 Venue）。</p>
     <div class="grid2">
-      <div>
-        <label>選擇場次<br><span class="muted">Session</span></label>
-        <select id="announceSession"></select>
-      </div>
-
-      <div>
-        <label>語言<br><span class="muted">Language</span></label>
-        <select id="announceLang">
-          <option value="BILINGUAL" selected>中文 + English</option>
-          <option value="ZH">只中文</option>
-          <option value="EN">English only</option>
-        </select>
-      </div>
+      <div><label>Title</label><input id="newTitle" value="YR Badminton" /></div>
+      <div><label>Date (YYYY-MM-DD)</label><input id="newDate" placeholder="2026-01-04" /></div>
+      <div><label>Start</label><input id="newStart" value="17:00" /></div>
+      <div><label>End</label><input id="newEnd" value="19:00" /></div>
+      <div><label>Venue (Court)</label><input id="newVenue" placeholder="Goodminton" /></div>
+      <div><label>Capacity</label><input id="newCap" type="number" min="1" value="20" /></div>
     </div>
-
-    <label style="margin-top:12px;">RSVP 連結（可選）<br><span class="muted">Optional RSVP link</span></label>
-    <input id="announceLink" placeholder="https://lchjames.github.io/badminton-rsvp/" />
-
+    <label style="margin-top:12px;">Note (optional)</label>
+    <input id="newNote" placeholder="optional" />
     <div class="row" style="margin-top:10px;">
-      <button id="btnGenAnnouncement" style="width:auto;">生成公告</button>
-      <button id="btnCopyAnnouncement" class="alt" style="width:auto;">複製到剪貼簿</button>
+      <label class="chip"><input type="checkbox" id="newIsOpen" checked> 設為開放 / Open</label>
+      <label class="chip"><input type="checkbox" id="newOnlyOpen"> 設為唯一開放（關閉其他場次）</label>
+      <button id="btnCreateSession" style="width:auto;">建立場次 / Create</button>
     </div>
-
-    <label style="margin-top:12px;">公告內容<br><span class="muted">Announcement text</span></label>
-    <textarea id="announceText" rows="10" placeholder="按「生成公告」後會出現文字"></textarea>
-
-    <p id="announceMsg" class="muted"></p>
+    <p id="createMsg" class="muted"></p>
   </section>
 
   <section class="card">
-    <h2>場次列表（可直接編輯）</h2>
+    <h2>場次列表</h2>
     <label class="chip"><input type="checkbox" id="showClosed"> 顯示已關閉 / Show closed</label>
     <div id="sessionsTable"></div>
-    <p class="muted">提示：建議每次只保留 1 個 isOpen=TRUE，避免隊員揀錯。</p>
   </section>
 
   <section class="card">
-    <h2>Bookings</h2>
+    <h2>Bookings（包括後補）</h2>
     <div class="row">
       <select id="rsvpSession" style="flex:1;"></select>
       <select id="rsvpFilter" style="width:auto;">
         <option value="ALL">ALL</option>
         <option value="YES">YES</option>
+        <option value="WAITLIST">WAITLIST</option>
         <option value="NO">NO</option>
       </select>
+      <button id="btnLoadRsvps" class="alt" style="width:auto;">載入名單</button>
     </div>
     <div id="rsvpsTable" style="margin-top:10px;"></div>
   </section>
