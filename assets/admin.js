@@ -1,3 +1,12 @@
+function on_(id, evt, fn){
+  const x = document.getElementById(id);
+  if(x) x.addEventListener(evt, fn);
+  return x;
+}
+function safeCall_(fn, ...args){
+  if(typeof fn === "function") return fn(...args);
+}
+
 // assets/admin.js
 const API_BASE = "https://script.google.com/macros/s/AKfycbwv5Db3ePyGuiTDOGFDM8joTprsOmL3xpymGPVOv3ocaPeTb-QTEPySqafNxY_LhJwm/exec";
 const WAITLIST_LIMIT = 6;
@@ -176,28 +185,44 @@ async function createSession(){
   setMsg("createMsg", `已建立：${res.sessionId}`);
   await loadSessions();
 }
+
 async function loadRsvps(){
   const adminKey=ensureKey();
   const sessionId=el("rsvpSession").value;
   if(!sessionId){ el("rsvpsTable").innerHTML=`<div class="muted">未有場次</div>`; return; }
   const data=await apiPost({action:"admin_listRsvps", adminKey, sessionId});
   if(!data.ok) throw new Error(data.error||"list failed");
-  const rows=(data.rsvps||[]);
+
+  const current=(data.current||[]).slice();
   const filter=el("rsvpFilter").value;
-  const view=rows.filter(r=>filter==="ALL"?true:String(r.status||"").toUpperCase()===filter)
-    .sort((a,b)=>String(b.timestamp||"").localeCompare(String(a.timestamp||"")));
+
+  const view=current.filter(r=>{
+    const placement=String(r.placement||"").toUpperCase();
+    if(filter==="ALL") return true;
+    if(filter==="NO") return String(r.status||"").toUpperCase()==="NO";
+    return placement===filter;
+  }).sort((a,b)=>String(a.timestamp||"").localeCompare(String(b.timestamp||""))); // earliest first
+
   if(!view.length){ el("rsvpsTable").innerHTML=`<div class="muted">暫時無預約</div>`; return; }
+
+  const placementZh = (p)=>{
+    p=String(p||"").toUpperCase();
+    if(p==="CONFIRMED") return "成功報名";
+    if(p==="WAITLIST") return "候補";
+    if(p==="NO") return "缺席";
+    return p;
+  };
+
   el("rsvpsTable").innerHTML=`
     <div class="table">
-      <div class="tr th small" style="grid-template-columns: 90px 190px 1fr 140px 90px 1fr;">
-        <div>Row</div><div>Timestamp</div><div>Name</div><div>Status</div><div>Players</div><div>Note</div>
+      <div class="tr th small" style="grid-template-columns: 190px 1fr 120px 90px 1fr;">
+        <div>Timestamp</div><div>Name</div><div>結果</div><div>Players</div><div>Note</div>
       </div>
       ${view.map(r=>`
-        <div class="tr small" style="grid-template-columns: 90px 190px 1fr 140px 90px 1fr;">
-          <div class="cell"><span class="badge">#${r.rowNumber}</span></div>
+        <div class="tr small" style="grid-template-columns: 190px 1fr 120px 90px 1fr;">
           <div class="cell">${esc(r.timestamp||"")}</div>
           <div class="cell">${esc(r.name||"")}</div>
-          <div class="cell">${esc(String(r.status||"").toUpperCase())}</div>
+          <div class="cell">${esc(placementZh(r.placement||r.status||""))}</div>
           <div class="cell">${Number(r.pax||1)||1}</div>
           <div class="cell">${esc(r.note||"")}</div>
         </div>
@@ -205,9 +230,8 @@ async function loadRsvps(){
     </div>
   `;
 }
-
-
 function toISODate_(d){
+(d){
   const y=d.getFullYear();
   const m=String(d.getMonth()+1).padStart(2,"0");
   const dd=String(d.getDate()).padStart(2,"0");
@@ -348,21 +372,22 @@ async function updateAnnounceSummary_(){
   if(!a || !box) return;
   const sid=a.value;
   if(!sid){ box.textContent=""; return; }
-  const s=sessions.find(x=>x.sessionId===sid);
-  if(!s){ box.textContent=""; return; }
 
   const adminKey=ensureKey();
   const data = await apiPost({action:"admin_listRsvps", adminKey, sessionId:sid});
   if(!data.ok){ box.textContent = data.error || "list failed"; return; }
 
-  const uniq = dedupeLatestByName_(data.rsvps||[]);
-  const yesTotal = sumByStatus_(uniq,"YES");
-  const waitTotal = sumByStatus_(uniq,"WAITLIST");
-  const cap = Number(s.capacity||0)||0;
-  const remain = cap? Math.max(0, cap-yesTotal) : 0;
-  const waitRemain = Math.max(0, WAITLIST_LIMIT-waitTotal);
+  const cap = Number(data.summary?.cap||0)||0;
+  const confirmedPax = Number(data.summary?.confirmedPax||0)||0;
+  const waitPax = Number(data.summary?.waitlistPax||0)||0;
+  const waitLimit = Number(data.summary?.waitLimit||WAITLIST_LIMIT)||WAITLIST_LIMIT;
 
-  box.textContent = `人數摘要：出席 ${yesTotal}/${cap||"-"}（剩餘 ${cap?remain:"-"}）｜後補 ${waitTotal}/${WAITLIST_LIMIT}（剩餘 ${waitRemain}）  /  Summary: YES ${yesTotal}/${cap||"-"} (rem ${cap?remain:"-"}) | WAITLIST ${waitTotal}/${WAITLIST_LIMIT} (rem ${waitRemain})`;
+  const remain = cap ? Math.max(0, cap-confirmedPax) : null;
+  const waitRemain = Math.max(0, waitLimit-waitPax);
+
+  box.textContent =
+    `人數摘要：成功報名 ${confirmedPax}/${cap||"-"}（剩餘 ${cap?remain:"-"}）｜候補 ${waitPax}/${waitLimit}（剩餘 ${waitRemain}）  /  ` +
+    `Summary: Confirmed ${confirmedPax}/${cap||"-"} (rem ${cap?remain:"-"}) | Waitlist ${waitPax}/${waitLimit} (rem ${waitRemain})`;
 }
 
 async function doAnnounce_(){
@@ -431,30 +456,62 @@ function lockSundayOnly_(inputId, msgId){
 }
 
 function init(){
-  const today = new Date().toISOString().split("T")[0];
-  const nd = document.getElementById("newDate"); if(nd){ nd.setAttribute("min", today); nd.value = today; }
-  const gs = document.getElementById("genStartDate"); if(gs){ gs.setAttribute("min", today); gs.value = today; gs.dataset.prevSunday = gs.value; gs.addEventListener("input", ()=>lockSundayOnly_("genStartDate","genMsg")); gs.addEventListener("change", ()=>lockSundayOnly_("genStartDate","genMsg")); lockSundayOnly_("genStartDate","genMsg"); }
+  // Use local date to avoid UTC day shift issues
+  const now = new Date();
+  const today = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-${String(now.getDate()).padStart(2,"0")}`;
 
-  el("btnLoad").addEventListener("click", async ()=>{
+  const nd = document.getElementById("newDate");
+  if(nd){ nd.setAttribute("min", today); nd.value = nd.value || today; }
+
+  const gs = document.getElementById("genStartDate");
+  if(gs){ gs.setAttribute("min", today); gs.value = gs.value || today; }
+
+  on_("btnLoad","click", async ()=>{
     try{
       ensureKey();
       await loadSessions();
       setMsg("topMsg","已載入。");
-    }catch(e){ setMsg("topMsg", e.message||String(e)); }
+    }catch(e){
+      setMsg("topMsg", e?.message || String(e));
+    }
   });
-  el("btnCreateSession").addEventListener("click", ()=>{ setMsg("createMsg",""); createSession().catch(e=>setMsg("createMsg", e.message||String(e))); });
-  const asel=document.getElementById("announceSession");
-  if(asel){ asel.addEventListener("change", ()=>updateAnnounceSummary_().catch(()=>{})); }
-  const ba=document.getElementById("btnAnnounce");
-  if(ba){ ba.addEventListener("click", ()=>doAnnounce_()); }
-  const bc=document.getElementById("btnCopyAnnounce");
-  if(bc){ bc.addEventListener("click", ()=>copyAnnounce_()); }
-  const bg=document.getElementById("btnGenSundays");
-  if(bg){ bg.addEventListener("click", ()=>{ setMsg("genMsg",""); generateSundays_().catch(e=>setMsg("genMsg", e.message||String(e))); }); }
-  el("showClosed").addEventListener("change", ()=>renderSessionsTable());
-  el("btnLoadRsvps").addEventListener("click", ()=>loadRsvps().catch(e=>setMsg("topMsg", e.message||String(e))));
-  el("rsvpFilter").addEventListener("change", ()=>loadRsvps().catch(()=>{}));
-  el("rsvpSession").addEventListener("change", ()=>loadRsvps().catch(()=>{}));
+
+  on_("btnCreateSession","click", ()=>{
+    setMsg("createMsg","");
+    const p = safeCall_(createSession);
+    if(p && typeof p.catch === "function") p.catch(e=>setMsg("createMsg", e?.message||String(e)));
+  });
+
+  // Announcement
+  on_("announceSession","change", ()=>{
+    const p = safeCall_(updateAnnounceSummary_);
+    if(p && typeof p.catch === "function") p.catch(()=>{});
+  });
+  on_("btnAnnounce","click", ()=> safeCall_(doAnnounce_) );
+  on_("btnCopyAnnounce","click", ()=> safeCall_(copyAnnounce_) );
+
+  // Generator
+  on_("btnGenSundays","click", ()=>{
+    setMsg("genMsg","");
+    const p = safeCall_(generateSundays_);
+    if(p && typeof p.catch === "function") p.catch(e=>setMsg("genMsg", e?.message||String(e)));
+  });
+
+  // Table / RSVP tools
+  on_("showClosed","change", ()=> safeCall_(renderSessionsTable) );
+  on_("btnLoadRsvps","click", ()=>{
+    const p = safeCall_(loadRsvps);
+    if(p && typeof p.catch === "function") p.catch(e=>setMsg("topMsg", e?.message||String(e)));
+  });
+  on_("rsvpFilter","change", ()=>{
+    const p = safeCall_(loadRsvps);
+    if(p && typeof p.catch === "function") p.catch(()=>{});
+  });
+  on_("rsvpSession","change", ()=>{
+    const p = safeCall_(loadRsvps);
+    if(p && typeof p.catch === "function") p.catch(()=>{});
+  });
+
   setMsg("topMsg","請輸入 Admin Key 後按「載入 / Load」。");
 }
 init();

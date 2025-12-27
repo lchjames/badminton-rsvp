@@ -3,11 +3,11 @@ const API_BASE = "https://script.google.com/macros/s/AKfycbwv5Db3ePyGuiTDOGFDM8j
 const WAITLIST_LIMIT = 6;
 
 const PSYCHO_LINES = [
-  "「可能」唔係選項。請揀「出席 / 後補 / 缺席」。 / “Maybe” is not an option. Please choose YES / WAITLIST / NO.",
+  "「可能」唔係選項。請揀「出席 / 後補 / 缺席」。 / “Maybe” is not an option. Please choose YES / NO.",
   "你揀「可能」= 未決定；隊伍唔會為你預留位。 / “Maybe” = undecided; no spot will be reserved.",
   "如果你想打，請直接揀「出席」；唔得就揀「缺席」。 / If you want to play, choose YES; otherwise choose NO.",
   "名額有限；「可能」會令安排更困難。 / Spots are limited; “Maybe” makes planning harder.",
-  "肯定係好人，所以請揀 YES / WAITLIST / NO。 / Be nice: choose YES / WAITLIST / NO.",
+  "肯定係好人，所以請揀 YES / NO。 / Be nice: choose YES / NO.",
 ];
 const MAYBE_COOLDOWN_MS = 900;
 
@@ -74,11 +74,15 @@ function setSubmitCooldown(ms){
   btn.disabled=true;
   window.setTimeout(()=>btn.disabled=false, ms);
 }
+
 function enforceRadioAvailability(){
   const yes=document.querySelector('input[name="status"][value="YES"]');
-  const wl=document.querySelector('input[name="status"][value="WAITLIST"]');
-  if(yes) yes.disabled = (remainingSeats !== null && remainingSeats <= 0);
-  if(wl) wl.disabled = (remainingWait !== null && remainingWait <= 0);
+  // No WAITLIST option anymore. YES will auto place into 候補 if over capacity.
+  if(yes){
+    const capFull = (remainingSeats!==null && remainingSeats<=0);
+    const waitFull = (remainingWait!==null && remainingWait<=0);
+    yes.disabled = capFull && waitFull;
+  }
 }
 function parseSessionStartMs_(s){
   const date=normalizeDateYYYYMMDD(s.date);
@@ -119,46 +123,66 @@ function dedupeLatestByName_(rsvps){
   }
   return Array.from(by.values());
 }
+
+function allocateBucketsClient_(uniq, cap, waitLimit){
+  const yes = uniq.filter(r=>String(r.status||"").toUpperCase()==="YES")
+    .slice()
+    .sort((a,b)=>String(a.timestamp||"").localeCompare(String(b.timestamp||"")));
+  const no = uniq.filter(r=>String(r.status||"").toUpperCase()==="NO");
+
+  let used=0, wused=0;
+  const confirmed=[], waitlist=[], overflow=[];
+  for(const r of yes){
+    const pax=Number(r.pax||1)||1;
+    if(cap>0 && used + pax <= cap){
+      used += pax;
+      confirmed.push(r);
+    } else if(wused + pax <= waitLimit){
+      wused += pax;
+      waitlist.push(r);
+    } else {
+      overflow.push(r);
+    }
+  }
+  return { confirmed, waitlist, overflow, totals:{ confirmedPax:used, waitlistPax:wused } };
+}
+
+
 function renderLists(rsvps){
   const uniq=dedupeLatestByName_(rsvps);
-  const yes=uniq.filter(r=>String(r.status||"").toUpperCase()==="YES");
-  const wl=uniq.filter(r=>String(r.status||"").toUpperCase()==="WAITLIST");
-
-  const yesSum=yes.reduce((s,r)=>s+(Number(r.pax)||1),0);
-  const wlSum=wl.reduce((s,r)=>s+(Number(r.pax)||1),0);
 
   const sess=sessions.find(x=>x.sessionId===currentSessionId)||{};
   const cap=Number(sess.capacity||0)||0;
 
+  const buckets = allocateBucketsClient_(uniq, cap, WAITLIST_LIMIT);
+  const confirmed = buckets.confirmed;
+  const waitlist = buckets.waitlist;
+
+  const yesSum = buckets.totals.confirmedPax;
+  const wlSum = buckets.totals.waitlistPax;
+
   remainingSeats = cap ? Math.max(0, cap-yesSum) : null;
   remainingWait = Math.max(0, WAITLIST_LIMIT-wlSum);
+
   enforceRadioAvailability();
 
   el("summary").innerHTML = cap
-    ? `出席：<b>${yesSum}</b> / ${cap} ｜ 尚餘名額：<b>${remainingSeats}</b>`
-    : `出席：<b>${yesSum}</b>`;
-  el("waitSummary").innerHTML = `後補：<b>${wlSum}</b> / ${WAITLIST_LIMIT} ｜ 尚餘後補：<b>${remainingWait}</b>`;
+    ? `<div class="small muted">名額：${yesSum}/${cap}（尚餘 ${Math.max(0, cap-yesSum)}）</div>`
+    : `<div class="small muted">名額：不限</div>`;
 
-  const item=(r,tag)=> {
-    const name=esc(r.name||"");
-    const pax=Number(r.pax)||1;
-    const note=String(r.note||"").trim();
-    return `
-      <div class="item">
-        <b>${name}</b>（${pax}）${tag?` <span class="badge">${tag}</span>`:""}
-        ${note?`<div class="muted">${esc(note)}</div>`:""}
-      </div>`;
-  };
+  el("waitSummary").innerHTML =
+    `<div class="small muted">候補：${wlSum}/${WAITLIST_LIMIT}（尚餘 ${Math.max(0, WAITLIST_LIMIT-wlSum)}）</div>`;
 
-  el("list").innerHTML = yes.length
-    ? yes.sort((a,b)=>String(b.timestamp||"").localeCompare(String(a.timestamp||""))).map(r=>item(r,"")).join("")
-    : `<div class="muted">暫時未有人出席</div>`;
+  el("yesList").innerHTML = confirmed.length
+    ? confirmed.sort((a,b)=>String(b.timestamp||"").localeCompare(String(a.timestamp||""))).map(r=>item(r,"CONFIRMED")).join("")
+    : `<div class="muted">暫時未有人成功報名</div>`;
 
-  el("waitList").innerHTML = wl.length
-    ? wl.sort((a,b)=>String(b.timestamp||"").localeCompare(String(a.timestamp||""))).map(r=>item(r,"WAITLIST")).join("")
-    : `<div class="muted">暫時未有人後補</div>`;
+  el("waitList").innerHTML = waitlist.length
+    ? waitlist.sort((a,b)=>String(b.timestamp||"").localeCompare(String(a.timestamp||""))).map(r=>item(r,"WAITLIST")).join("")
+    : `<div class="muted">暫時未有人進入候補</div>`;
 }
 async function loadSessions(){
+(){
   const data=await apiGet({action:"sessions"});
   sessions=data.sessions||[];
   const open=sessions.filter(s=>!!s.isOpen);
@@ -228,7 +252,7 @@ async function init(){
     } else setWarning("");
   }));
 
-  el("sessionSelect").addEventListener("change", async (e)=>{
+  el("sessionSelect")?.addEventListener("change", async (e)=>{
     currentSessionId=e.target.value;
     const s=sessions.find(x=>x.sessionId===currentSessionId);
     if(s) renderSessionInfo(s);
@@ -236,7 +260,7 @@ async function init(){
     await loadRsvps();
   });
 
-  el("cancelBtn").addEventListener("click", async ()=>{
+  el("cancelBtn")?.addEventListener("click", async ()=>{
     try{
       setMsg("");
       if(!currentSessionId){ setMsg("暫時未有開放場次。"); return; }
@@ -249,7 +273,7 @@ async function init(){
     }catch(e){ setMsg("取消失敗，請稍後再試。"); }
   });
 
-  el("rsvpForm").addEventListener("submit", async (e)=>{
+  el("rsvpForm")?.addEventListener("submit", async (e)=>{
     e.preventDefault();
     setMsg("");
     const btn=el("submitBtn"); btn.disabled=true;
@@ -262,16 +286,16 @@ async function init(){
       if(!name){ setMsg("請填寫姓名 / 暱稱。"); return; }
       if(status==="MAYBE"){
         setWarning(nextPsychoLine());
-        setMsg("「可能」唔係選項，請改為「出席 / 後補 / 缺席」。 / “Maybe” is not an option. Please choose YES / WAITLIST / NO.");
+        setMsg("「可能」唔係選項，請改為「出席 / 缺席」。 / “Maybe” is not an option. Please choose YES / NO.");
         setSubmitCooldown(MAYBE_COOLDOWN_MS);
         return;
       }
       const res=await apiPost({action:"rsvp", sessionId: currentSessionId, name, status, pax, note});
       if(!res?.ok){
         const err=String(res.error||"").toLowerCase();
-        if(err.includes("capacity")){
-          setMsg("已滿額 / Full. 如要出席可改揀「後補」。");
-          setWarning("已滿額 / Full. 可選後補。");
+        if(err.includes("full")){
+          setMsg("名額及候補名單已滿 / Full (including waitlist).");
+          setWarning("名額及候補名單已滿 / Full (including waitlist).");
         } else if(err.includes("waitlist")){
           setMsg(`後補已滿（最多 ${WAITLIST_LIMIT}）。`);
           setWarning(`後補已滿（最多 ${WAITLIST_LIMIT}）。`);
@@ -279,7 +303,13 @@ async function init(){
         await loadRsvps();
         return;
       }
-      setMsg("已提交。");
+      if(res.placement==="WAITLIST"){
+        setMsg("名額已滿，你已進入候補名單。 / The session is full. You are placed on the waitlist.");
+      } else if(res.placement==="CONFIRMED"){
+        setMsg("你已成功報名。 / You are successfully registered.");
+      } else {
+        setMsg("已更新。 / Updated.");
+      }
       setWarning("");
       await loadRsvps();
     }catch(err){ setMsg("提交失敗，請稍後再試。"); }

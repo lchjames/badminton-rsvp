@@ -93,9 +93,12 @@ function getSessionById_(sessionId) {
 function getRsvpsPublic_(sessionId) {
   sessionId = String(sessionId||"").trim();
   if (!sessionId) return { ok:false, error:"missing sessionId" };
+  const session = getSessionById_(sessionId);
+  const cap = session ? (Number(session.capacity||0)||0) : 0;
+
   const sh = openSheet_(SHEET_RSVPS);
   const values = sh.getDataRange().getValues();
-  if (values.length < 2) return { ok:true, rsvps: [] };
+  if (values.length < 2) return { ok:true, rsvps: [], current: [], summary:{ cap:cap, confirmedPax:0, waitlistPax:0 } };
   const [header, ...rows] = values;
   const idx = index_(header);
   const out = rows.filter(r=>String(r[idx.sessionId])===sessionId).map(r=>({
@@ -106,7 +109,17 @@ function getRsvpsPublic_(sessionId) {
     pax:Number(String(r[idx.pax]||"1"))||1,
     note:String(r[idx.note]||""),
   }));
-  return { ok:true, rsvps: out };
+
+  const buckets = computeBuckets_(sessionId, cap, WAITLIST_LIMIT);
+  const current = [];
+  const map = latestMapWithOverride_(sessionId, null, null, null);
+  for (const k in map){
+    const r = map[k];
+    const placement = buckets.placementByKey[k] || "NO";
+    current.push({ name:r.name, pax:r.pax, status:r.status, timestamp:r.ts, note:r.note, placement });
+  }
+  // only keep latest items (current state)
+  return { ok:true, rsvps: out, current: current, summary:{ cap:cap, confirmedPax:buckets.totals.yesPax, waitlistPax:buckets.totals.waitPax, waitLimit:WAITLIST_LIMIT } };
 }
 
 function computeTotalsWithOverride_(sessionId, nameOverride, statusOverride, paxOverride) {
@@ -140,6 +153,81 @@ function computeTotalsWithOverride_(sessionId, nameOverride, statusOverride, pax
   return { yesTotal, waitTotal };
 }
 
+
+
+function latestMapWithOverride_(sessionId, nameOverride, statusOverride, paxOverride) {
+  const sh = openSheet_(SHEET_RSVPS);
+  const values = sh.getDataRange().getValues();
+  const map = {};
+  if (values.length >= 2) {
+    const [header, ...rows] = values;
+    const idx = index_(header);
+    for (let i=0;i<rows.length;i++) {
+      const row = rows[i];
+      if (String(row[idx.sessionId]) !== String(sessionId)) continue;
+      const nmRaw = String(row[idx.name]||"").trim();
+      const nm = nmRaw.toLowerCase();
+      if (!nm) continue;
+      const ts = (row[idx.timestamp] instanceof Date) ? row[idx.timestamp].toISOString() : String(row[idx.timestamp]||"");
+      const prev = map[nm];
+      if (!prev || String(ts).localeCompare(String(prev.ts)) > 0) {
+        map[nm] = { key:nm, name:nmRaw, ts, status:String(row[idx.status]||"").toUpperCase(), pax:Number(String(row[idx.pax]||"1"))||1, note:String(row[idx.note]||"") };
+      }
+    }
+  }
+  const key = String(nameOverride||"").trim().toLowerCase();
+  if (key) {
+    map[key] = { key, name:String(nameOverride||"").trim(), ts:new Date().toISOString(), status:String(statusOverride||"").toUpperCase(), pax:Number(paxOverride||1)||1, note:"" };
+  }
+  return map;
+}
+
+function allocateBuckets_(map, cap, waitLimit){
+  const placementByKey = {};
+  const yes = [];
+  const no = [];
+  for (const k in map){
+    const r=map[k];
+    if (r.status==="YES") yes.push(r);
+    if (r.status==="NO") no.push(r);
+  }
+  // sort by last submit time (ascending) => earlier = higher priority
+  yes.sort((a,b)=>String(a.ts).localeCompare(String(b.ts)));
+
+  let used=0, wused=0;
+  const confirmed=[], waitlist=[], overflow=[];
+  for (const r of yes){
+    const pax = Number(r.pax||1)||1;
+    if (cap>0 && used + pax <= cap){
+      used += pax;
+      placementByKey[r.key] = "CONFIRMED";
+      confirmed.push(r);
+    } else if (wused + pax <= waitLimit){
+      wused += pax;
+      placementByKey[r.key] = "WAITLIST";
+      waitlist.push(r);
+    } else {
+      placementByKey[r.key] = "OVERFLOW";
+      overflow.push(r);
+    }
+  }
+  for (const r of no){
+    placementByKey[r.key] = "NO";
+  }
+  return { placementByKey, confirmed, waitlist, overflow, totals:{ yesPax:used, cap:cap, waitPax:wused, waitLimit:waitLimit } };
+}
+
+function computeBuckets_(sessionId, cap, waitLimit){
+  const map = latestMapWithOverride_(sessionId, null, null, null);
+  return allocateBuckets_(map, cap, waitLimit);
+}
+
+function computeBucketsWithOverride_(sessionId, nameOverride, statusOverride, paxOverride, cap, waitLimit){
+  const map = latestMapWithOverride_(sessionId, nameOverride, statusOverride, paxOverride);
+  return allocateBuckets_(map, cap, waitLimit);
+}
+
+
 function addRsvp_(p) {
   const sessionId = String(p.sessionId||"").trim();
   const name = String(p.name||"").trim();
@@ -149,24 +237,31 @@ function addRsvp_(p) {
 
   if (!sessionId || !name || !statusRaw) return { ok:false, error:"missing fields" };
   if (statusRaw === "MAYBE") return { ok:false, error:"MAYBE is not an option" };
-  if (["YES","NO","WAITLIST"].indexOf(statusRaw) === -1) return { ok:false, error:"invalid status" };
+  if (["YES","NO"].indexOf(statusRaw) === -1) return { ok:false, error:"invalid status" };
 
   const session = getSessionById_(sessionId);
   if (!session) return { ok:false, error:"session not found" };
   const cap = Number(session.capacity||0)||0;
 
-  if (cap>0 && statusRaw==="YES") {
-    const totals = computeTotalsWithOverride_(sessionId, name, statusRaw, pax);
-    if (totals.yesTotal > cap) return { ok:false, error:"capacity reached" };
-  }
-  if (statusRaw==="WAITLIST") {
-    const totals = computeTotalsWithOverride_(sessionId, name, statusRaw, pax);
-    if (totals.waitTotal > WAITLIST_LIMIT) return { ok:false, error:"waitlist full" };
+  // Check capacity +候補名額（只針對 YES）
+  if (statusRaw==="YES") {
+    const check = computeBucketsWithOverride_(sessionId, name, statusRaw, pax, cap, WAITLIST_LIMIT);
+    const key = String(name||"").trim().toLowerCase();
+    const placement = check.placementByKey[key];
+    if (placement === "OVERFLOW") return { ok:false, error:"full" };
   }
 
   const sh = openSheet_(SHEET_RSVPS);
   appendRowAsText_(sh, [new Date().toISOString(), sessionId, name, statusRaw, String(pax), note]);
-  return { ok:true };
+
+  // Return user experience message (confirmed vs候補)
+  if (statusRaw==="YES") {
+    const after = computeBuckets_(sessionId, cap, WAITLIST_LIMIT);
+    const key = String(name||"").trim().toLowerCase();
+    const placement = after.placementByKey[key] || "CONFIRMED";
+    return { ok:true, placement: placement };
+  }
+  return { ok:true, placement: "NO" };
 }
 
 // --- Admin create session / court ---
@@ -267,9 +362,12 @@ function adminListRsvps_(p) {
   const sessionId = String(p.sessionId||"").trim();
   if (!sessionId) return { ok:false, error:"missing sessionId" };
 
+  const session = getSessionById_(sessionId);
+  const cap = session ? (Number(session.capacity||0)||0) : 0;
+
   const sh=openSheet_(SHEET_RSVPS);
   const values=sh.getDataRange().getValues();
-  if(values.length<2) return { ok:true, rsvps: [] };
+  if(values.length<2) return { ok:true, rsvps: [], current: [], summary:{ cap:cap, confirmedPax:0, waitlistPax:0 } };
   const [header, ...rows]=values;
   const idx=index_(header);
 
@@ -287,7 +385,17 @@ function adminListRsvps_(p) {
       note:String(row[idx.note]||""),
     });
   }
-  return { ok:true, rsvps: out };
+
+  const buckets = computeBuckets_(sessionId, cap, WAITLIST_LIMIT);
+  const current=[];
+  const map=latestMapWithOverride_(sessionId, null, null, null);
+  for (const k in map){
+    const r=map[k];
+    const placement=buckets.placementByKey[k] || "NO";
+    current.push({ name:r.name, pax:r.pax, status:r.status, timestamp:r.ts, note:r.note, placement });
+  }
+
+  return { ok:true, rsvps: out, current: current, summary:{ cap:cap, confirmedPax:buckets.totals.yesPax, waitlistPax:buckets.totals.waitPax, waitLimit:WAITLIST_LIMIT } };
 }
 
 
