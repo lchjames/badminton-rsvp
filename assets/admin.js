@@ -225,30 +225,17 @@ function nextSunday_(fromDate){
   return d;
 }
 
-function forceSundayInput_(){
-  const gs=document.getElementById("genStartDate");
-  if(!gs) return;
-  const v=gs.value;
-  const d=parseISODate_(v);
-  if(!d) return;
-  if(d.getDay()!==0){
-    const s=nextSunday_(d);
-    gs.value = toISODate_(s);
-    setMsg("genMsg", "已自動調整為星期日 / Auto-adjusted to Sunday.");
-  }
-}
+
 
 async function generateSundays_(){
   const adminKey=ensureKey();
+
+  // genStartDate is auto-forced to Sunday in the date picker handler
   const startStr=el("genStartDate").value;
-  let start=parseISODate_(startStr);
-  // lock generator to Sunday
-  if(start && start.getDay()!==0){ start = nextSunday_(start); }
+  const start=parseISODate_(startStr);
+  if(!start) throw new Error("請填「從哪一日開始」日期（星期日）");
+  if(start.getDay()!==0) throw new Error("請選擇星期日（系統會自動調整）");
 
-  if(!start) throw new Error("請填「從哪一日開始」日期");
-  start = nextSunday_(start);
-
-  el("genStartDate").value = toISODate_(start);
   const weeks = Number(el("genWeeks").value||8)||8;
   const venue = (el("genVenue").value||"").trim();
   if(!venue) throw new Error("請填預設 Venue");
@@ -385,10 +372,28 @@ async function copyAnnounce_(){
   }
 }
 
+
+function enforceSundayOnPicker_(){
+  const gs=document.getElementById("genStartDate");
+  if(!gs) return;
+  const d=parseISODate_(gs.value);
+  if(!d) return;
+
+  // Force to the nearest upcoming Sunday (including today if already Sunday)
+  const day=d.getDay(); // 0=Sun ... 6=Sat
+  if(day===0) return;
+
+  const add=(7 - day) % 7;
+  const s=new Date(d.getTime());
+  s.setDate(s.getDate()+add);
+  gs.value = toISODate_(s);
+  setMsg("genMsg", "日期已自動調整為星期日 / Date auto-adjusted to Sunday.");
+}
+
 function init(){
   const today = new Date().toISOString().split("T")[0];
   const nd = document.getElementById("newDate"); if(nd){ nd.setAttribute("min", today); nd.value = today; }
-  const gs = document.getElementById("genStartDate"); if(gs){ gs.setAttribute("min", today); gs.value = today; }
+  const gs = document.getElementById("genStartDate"); if(gs){ gs.setAttribute("min", today); gs.value = today; gs.addEventListener("input", ()=>enforceSundayOnPicker_()); gs.addEventListener("change", ()=>enforceSundayOnPicker_()); }
 
   el("btnLoad").addEventListener("click", async ()=>{
     try{
@@ -398,8 +403,6 @@ function init(){
     }catch(e){ setMsg("topMsg", e.message||String(e)); }
   });
   el("btnCreateSession").addEventListener("click", ()=>{ setMsg("createMsg",""); createSession().catch(e=>setMsg("createMsg", e.message||String(e))); });
-  const gsd=document.getElementById("genStartDate");
-  if(gsd){ gsd.addEventListener("change", ()=>forceSundayInput_()); }
   const ba=document.getElementById("btnAnnounce");
   if(ba){ ba.addEventListener("click", ()=>doAnnounce_()); }
   const bc=document.getElementById("btnCopyAnnounce");
