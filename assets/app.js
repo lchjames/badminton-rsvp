@@ -3,7 +3,7 @@ const API_BASE = "https://script.google.com/macros/s/AKfycbwv5Db3ePyGuiTDOGFDM8j
 const WAITLIST_LIMIT = 6;
 
 const PSYCHO_LINES = [
-  "「可能」唔係選項。請揀「出席 / 後補 / 缺席」。 / “Maybe” is not an option. Please choose YES / NO.",
+  "「可能」唔係選項。請揀「出席 / 候補 / 缺席」。 / “Maybe” is not an option. Please choose YES / NO.",
   "你揀「可能」= 未決定；隊伍唔會為你預留位。 / “Maybe” = undecided; no spot will be reserved.",
   "如果你想打，請直接揀「出席」；唔得就揀「缺席」。 / If you want to play, choose YES; otherwise choose NO.",
   "名額有限；「可能」會令安排更困難。 / Spots are limited; “Maybe” makes planning harder.",
@@ -111,7 +111,7 @@ function renderSessionInfo(s){
   el("sessionInfo").innerHTML = `
     <div><b>${esc(s.title||"Badminton")}</b></div>
     <div>${esc(date)} ${esc(start)}-${esc(end)}</div>
-    <div>${esc(venue)} ｜ 上限：${cap||"-"} ｜ 後補上限：${WAITLIST_LIMIT}${note?` ｜ ${esc(note)}`:""}</div>
+    <div>${esc(venue)} ｜ 上限：${cap||"-"} ｜ 候補上限：${WAITLIST_LIMIT}${note?` ｜ ${esc(note)}`:""}</div>
   `;
 }
 function dedupeLatestByName_(rsvps){
@@ -247,7 +247,7 @@ async function init(){
   document.querySelectorAll('input[name="status"]').forEach(r=>r.addEventListener("change",(e)=>{
     if(e.target.value==="MAYBE"){
       setWarning(nextPsychoLine());
-      setMsg("提示：你揀咗「可能」，請改為「出席 / 後補 / 缺席」。");
+      setMsg("提示：你揀咗「可能」，請改為「出席 / 候補 / 缺席」。");
       setSubmitCooldown(MAYBE_COOLDOWN_MS);
     } else setWarning("");
   }));
@@ -297,8 +297,8 @@ async function init(){
           setMsg("名額及候補名單已滿 / Full (including waitlist).");
           setWarning("名額及候補名單已滿 / Full (including waitlist).");
         } else if(err.includes("waitlist")){
-          setMsg(`後補已滿（最多 ${WAITLIST_LIMIT}）。`);
-          setWarning(`後補已滿（最多 ${WAITLIST_LIMIT}）。`);
+          setMsg(`候補已滿（最多 ${WAITLIST_LIMIT}）。`);
+          setWarning(`候補已滿（最多 ${WAITLIST_LIMIT}）。`);
         } else setMsg(`提交失敗：${res.error||"未知錯誤"}`);
         await loadRsvps();
         return;
