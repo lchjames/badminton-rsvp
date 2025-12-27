@@ -7,98 +7,152 @@
   <link rel="stylesheet" href="assets/style.css" />
 </head>
 <body>
-<header class="container">
-  <h1>YR Badminton Admin</h1>
-  <p class="muted"><a href="index.html">← 返回登記頁 / Back to RSVP</a></p>
-  <div class="row">
-    <input id="adminKey" placeholder="Admin Key" style="flex:1;" />
-    <button id="btnLoad" style="width:auto;">載入 / Load</button>
-  </div>
-  <p id="topMsg" class="muted"></p>
-</header>
-
-
-<main class="container">
-  <section class="card">
-    <h2>📢 一鍵公告（Copy & Paste）</h2>
-    <p class="muted">生成 WhatsApp/群組公告文字（包括人數摘要）。按一下即可複製，然後手動貼去群組。</p>
-    <div class="row">
-      <select id="announceSession" style="flex:1;"></select>
-      <button id="btnAnnounce" style="width:auto;">生成公告 / Generate</button>
-      <button id="btnCopyAnnounce" class="alt" style="width:auto;">複製 / Copy</button>
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-title">YR Badminton</div>
+      <div class="brand-sub">Admin</div>
     </div>
-    <textarea id="announceText" rows="7" style="width:100%; margin-top:10px;" placeholder="公告會喺呢度出現..."></textarea>
-    <p id="announceSummary" class="muted"></p>
-    <p id="announceMsg" class="muted"></p>
-  </section>
+    <nav class="topnav">
+      <a class="link" href="index.html">User Page</a>
+    </nav>
+  </header>
 
-  <section class="card">
-    <h2>➕ 新增場次 / 新增球場（New Session / Court）</h2>
-    <p class="muted">用嚟新增例外日期 / 例外球場，或者同一日新增第二個場（不同 Venue）。</p>
-    <div class="grid2">
-      <div><label>Title</label><input id="newTitle" value="YR Badminton" /></div>
-      <div><label>Date (YYYY-MM-DD)</label><input id="newDate" type="date" required /></div>
-      <div><label>Start</label><input id="newStart" value="17:00" /></div>
-      <div><label>End</label><input id="newEnd" value="19:00" /></div>
-      <div><label>Venue (Court)</label><input id="newVenue" value="Goodminton" /></div>
-      <div><label>Capacity</label><input id="newCap" type="number" min="1" value="20" /></div>
-    </div>
-    <label style="margin-top:12px;">Note (optional)</label>
-    <input id="newNote" placeholder="optional" />
-    <div class="row" style="margin-top:10px;">
-      <label class="chip"><input type="checkbox" id="newIsOpen" checked> 設為開放 / Open</label>
-      <label class="chip"><input type="checkbox" id="newOnlyOpen"> 設為唯一開放（關閉其他場次）</label>
-      <button id="btnCreateSession" style="width:auto;">建立場次 / Create</button>
-    </div>
-    <p id="createMsg" class="muted"></p>
+  <main class="container">
+    <section class="card">
+      <h1>Admin 控制台</h1>
 
-    <hr style="margin:14px 0; opacity:.25;">
-    <h3 style="margin:0 0 8px;">🗓️ 一鍵生成未來星期日（Every Sunday 17:00–19:00）</h3>
-    <p class="muted">快速建立未來 N 個星期日場次。第一個會設為 OPEN，其餘預設關閉。例外日期／例外球場請用上面「新增場次」。</p>
-    <div class="grid2">
-      <div><label>從哪一日開始（Sunday start date）</label><input id="genStartDate" type="date" /></div>
-      <div><label>生成幾多個星期（日）</label>
-        <select id="genWeeks">
-          <option value="4">4</option>
-          <option value="8" selected>8</option>
-          <option value="12">12</option>
-          <option value="16">16</option>
-        </select>
+      <div class="field">
+        <label for="adminKey">Admin Key</label>
+        <input id="adminKey" placeholder="輸入 Admin Key" />
+        <div class="muted small">Admin Key 用於管理（新增/修改/刪除場次、查看/刪除預約、發公告）。</div>
       </div>
-      <div><label>預設球場 Venue</label><input id="genVenue" value="Goodminton" /></div>
-      <div><label>Capacity</label><input id="genCap" type="number" min="1" value="20" /></div>
-    </div>
-    <div class="row" style="margin-top:10px;">
-      <label class="chip"><input type="checkbox" id="genOpenOnly"> 設為唯一開放（關閉其他場次）</label>
-      <button id="btnGenSundays" style="width:auto;">生成 / Generate</button>
-    </div>
-    <p id="genMsg" class="muted"></p>
 
-  </section>
+      <div class="actions">
+        <button id="btnLoad" class="btn primary" type="button">載入 / Load</button>
+        <button id="btnRefresh" class="btn" type="button">刷新 / Refresh</button>
+      </div>
 
-  <section class="card">
-    <h2>場次列表</h2>
-    <label class="chip"><input type="checkbox" id="showClosed"> 顯示已關閉 / Show closed</label>
-    <div id="sessionsTable"></div>
-  </section>
+      <div id="topMsg" class="toast"></div>
+    </section>
 
-  <section class="card">
-    <h2>Bookings（包括後補）</h2>
-    <div class="row">
-      <select id="rsvpSession" style="flex:1;"></select>
-      <select id="rsvpFilter" style="width:auto;">
-        <option value="ALL">ALL</option>
-        <option value="YES">YES</option>
-        <option value="CONFIRMED">CONFIRMED</option>
-        <option value="WAITLIST">WAITLIST</option>
-        <option value="NO">NO</option>
-      </select>
-      <button id="btnLoadRsvps" class="alt" style="width:auto;">載入名單</button>
-    </div>
-    <div id="rsvpsTable" style="margin-top:10px;"></div>
-  </section>
-</main>
+    <section class="card">
+      <h2>新增場次 / Create Session</h2>
+      <p class="muted small">日期只可星期日（系統會自動修正；後端亦會拒絕非 Sunday）。</p>
 
-<script src="assets/admin.js"></script>
+      <div class="grid-2">
+        <div class="field">
+          <label for="newDate">日期 / Date (Sunday only)</label>
+          <input id="newDate" type="date" />
+        </div>
+        <div class="field">
+          <label for="venue">場地 / Venue</label>
+          <input id="venue" value="Goodminton" />
+        </div>
+      </div>
+
+      <div class="grid-3">
+        <div class="field">
+          <label for="start">開始 / Start</label>
+          <input id="start" value="17:00" />
+        </div>
+        <div class="field">
+          <label for="end">結束 / End</label>
+          <input id="end" value="19:00" />
+        </div>
+        <div class="field">
+          <label for="capacity">名額 / Capacity</label>
+          <input id="capacity" type="number" min="1" value="20" />
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="note">備註 / Note</label>
+        <input id="note" placeholder="例如：帶波 / bring shuttle" />
+      </div>
+
+      <div class="grid-2">
+        <div class="field">
+          <label for="isOpen">是否開放 / Open?</label>
+          <select id="isOpen">
+            <option value="true">OPEN</option>
+            <option value="false">CLOSED</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="title">標題 / Title</label>
+          <input id="title" value="YR Badminton" />
+        </div>
+      </div>
+
+      <div class="actions">
+        <button id="btnCreate" class="btn primary" type="button">新增 / Create</button>
+      </div>
+      <div id="createMsg" class="toast"></div>
+    </section>
+
+    <section class="card">
+      <h2>場次列表 / Sessions</h2>
+      <div class="row gap">
+        <label class="chk"><input id="showClosed" type="checkbox" /> 顯示已關閉 / Show closed</label>
+      </div>
+
+      <div id="sessionsTable" class="table"></div>
+      <div id="sessMsg" class="toast"></div>
+    </section>
+
+    <section class="card">
+      <h2>Bookings（顯示 current）</h2>
+      <div class="grid-2">
+        <div class="field">
+          <label for="rsvpSession">場次 / Session</label>
+          <select id="rsvpSession"></select>
+        </div>
+        <div class="field">
+          <label for="rsvpFilter">篩選 / Filter</label>
+          <select id="rsvpFilter">
+            <option value="ALL">ALL</option>
+            <option value="CONFIRMED">成功報名 / Confirmed</option>
+            <option value="WAITLIST">候補 / Waitlist</option>
+            <option value="NO">缺席 / No</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button id="btnLoadRsvps" class="btn primary" type="button">載入名單 / Load</button>
+      </div>
+
+      <div id="rsvpSummary" class="muted small"></div>
+      <div id="rsvpsTable" class="table"></div>
+    </section>
+
+    <section class="card">
+      <h2>📢 發公告（Copy-Paste）</h2>
+      <div class="grid-2">
+        <div class="field">
+          <label for="announceSession">場次 / Session</label>
+          <select id="announceSession"></select>
+        </div>
+        <div class="field">
+          <label>人數摘要（只顯示於網頁）</label>
+          <div id="announceSummary" class="muted small"></div>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button id="btnAnnounce" class="btn primary" type="button">生成公告 / Generate</button>
+        <button id="btnCopyAnnounce" class="btn" type="button">複製 / Copy</button>
+      </div>
+
+      <textarea id="announceText" class="textarea" rows="12" placeholder="生成後會出現"></textarea>
+      <div id="announceMsg" class="toast"></div>
+    </section>
+
+    <footer class="footer muted">
+      <div class="small">提示：Apps Script 可設定 time-driven trigger 跑 <code>dailyCleanup</code> 自動關閉過期場次（保留歷史）。</div>
+    </footer>
+  </main>
+
+  <script src="assets/admin.js"></script>
 </body>
 </html>
