@@ -3,10 +3,11 @@ const API_BASE = "https://script.google.com/macros/s/AKfycbwv5Db3ePyGuiTDOGFDM8j
 const WAITLIST_LIMIT = 6;
 
 const PSYCHO_LINES = [
-  "「可能」唔係選項。請揀「出席 / 後補 / 缺席」。",
-  "你揀「可能」= 令我哋難分隊、難訂場。拜託揀 YES / WAITLIST / NO。",
-  "系統已偵測到猶豫（講笑）。請改返 YES / WAITLIST / NO。",
-  "「可能」會令統計崩潰。你肯定係好人，所以請揀 YES / WAITLIST / NO。",
+  "「可能」唔係選項。請揀「出席 / 後補 / 缺席」。 / “Maybe” is not an option. Please choose YES / WAITLIST / NO.",
+  "你揀「可能」= 未決定；隊伍唔會為你預留位。 / “Maybe” = undecided; no spot will be reserved.",
+  "如果你想打，請直接揀「出席」；唔得就揀「缺席」。 / If you want to play, choose YES; otherwise choose NO.",
+  "名額有限；「可能」會令安排更困難。 / Spots are limited; “Maybe” makes planning harder.",
+  "肯定係好人，所以請揀 YES / WAITLIST / NO。 / Be nice: choose YES / WAITLIST / NO.",
 ];
 const MAYBE_COOLDOWN_MS = 900;
 
@@ -196,6 +197,25 @@ async function loadRsvps(){
   const data=await apiGet({action:"list", sessionId: currentSessionId});
   renderLists(data.rsvps||[]);
 }
+
+function wireMaybeWarning_(){
+  const radios = Array.from(document.querySelectorAll('input[name="status"]'));
+  if(!radios.length) return;
+  const onChange = ()=>{
+    const status=document.querySelector('input[name="status"]:checked')?.value;
+    if(status==="MAYBE"){
+      setWarning(nextPsychoLine());
+    }else{
+      // do not erase other warnings caused by capacity checks; only clear if current warning is a psycho line
+      const w=el("statusWarning");
+      if(w && w.textContent && w.textContent.includes("Maybe")){
+        setWarning("");
+      }
+    }
+  };
+  radios.forEach(r=>r.addEventListener("change", onChange));
+}
+
 async function init(){
   await loadSessions();
   await loadRsvps();
@@ -242,7 +262,7 @@ async function init(){
       if(!name){ setMsg("請填寫姓名 / 暱稱。"); return; }
       if(status==="MAYBE"){
         setWarning(nextPsychoLine());
-        setMsg("「可能」唔係選項，請改為「出席 / 後補 / 缺席」。");
+        setMsg("「可能」唔係選項，請改為「出席 / 後補 / 缺席」。 / “Maybe” is not an option. Please choose YES / WAITLIST / NO.");
         setSubmitCooldown(MAYBE_COOLDOWN_MS);
         return;
       }

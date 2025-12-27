@@ -153,6 +153,7 @@ async function loadSessions(){
   sessions=data.sessions||[];
   fillSessionSelects();
   fillAnnounceSelects_();
+  updateAnnounceSummary_().catch(()=>{});
   renderSessionsTable();
 }
 async function createSession(){
@@ -302,15 +303,58 @@ function pickClosestOpenSessionIdAdmin_(){
   const upcoming=sorted.find(x=>x.ms>=now);
   return (upcoming?upcoming.s.sessionId:sorted[sorted.length-1].s.sessionId) || "";
 }
+
 async function buildAnnouncement_(){
-  const adminKey=ensureKey();
-  const sid = document.getElementById("announceSession").value || pickClosestOpenSessionIdAdmin_();
+  const sid = document.getElementById("announceSession")?.value || pickClosestOpenSessionIdAdmin_();
   if(!sid) throw new Error("未有場次可生成公告");
   const s = sessions.find(x=>x.sessionId===sid);
   if(!s) throw new Error("session not found");
 
+  const date = normalizeDateYYYYMMDD(s.date);
+  const start = normalizeTimeHHMM(s.start);
+  const end = normalizeTimeHHMM(s.end);
+  const venue = String(s.venue||"").trim();
+  const title = String(s.title||"YR Badminton").trim() || "YR Badminton";
+  const link = `${location.origin}${location.pathname.replace(/admin\.html.*$/,'index.html')}`;
+
+  const zh = [];
+  zh.push(`📢 ${title} 打波登記 / RSVP`);
+  zh.push(`🗓️ ${date} (Sun) ${start}-${end}`);
+  zh.push(`📍 ${venue}`);
+  zh.push("");
+  zh.push("");
+  zh.push("請到以下連結更新出席狀態：");
+  zh.push(link);
+  zh.push("");
+  zh.push("Status：出席 YES / 缺席 NO");
+
+  const en = [];
+  en.push(`📢 ${title} RSVP`);
+  en.push(`🗓️ ${date} (Sun) ${start}-${end}`);
+  en.push(`📍 ${venue}`);
+  en.push("");
+  en.push("");
+  en.push("Please update your status via:");
+  en.push(link);
+  en.push("");
+  en.push("Status: YES / NO");
+
+  return zh.join("\n") + "\n\n--------------------\n\n" + en.join("\n");
+}
+
+async function updateAnnounceSummary_(){
+  const a=document.getElementById("announceSession");
+  const box=document.getElementById("announceSummary");
+  if(!a || !box) return;
+  const sid=a.value;
+  if(!sid){ box.textContent=""; return; }
+  const s=sessions.find(x=>x.sessionId===sid);
+  if(!s){ box.textContent=""; return; }
+
+  const adminKey=ensureKey();
   const data = await apiPost({action:"admin_listRsvps", adminKey, sessionId:sid});
-  if(!data.ok) throw new Error(data.error||"list failed");
+  if(!data.ok){ box.textContent = data.error || "list failed"; return; }
+
   const uniq = dedupeLatestByName_(data.rsvps||[]);
   const yesTotal = sumByStatus_(uniq,"YES");
   const waitTotal = sumByStatus_(uniq,"WAITLIST");
@@ -318,27 +362,9 @@ async function buildAnnouncement_(){
   const remain = cap? Math.max(0, cap-yesTotal) : 0;
   const waitRemain = Math.max(0, WAITLIST_LIMIT-waitTotal);
 
-  const date = normalizeDateYYYYMMDD(s.date);
-  const start = normalizeTimeHHMM(s.start);
-  const end = normalizeTimeHHMM(s.end);
-  const venue = String(s.venue||"").trim();
-  const title = String(s.title||"YR Badminton").trim() || "YR Badminton";
-
-  const lines = [];
-  lines.push(`📢 ${title} 打波登記 / RSVP`);
-  lines.push(`🗓️ ${date} (Sun) ${start}-${end}`);
-  lines.push(`📍 ${venue}`);
-  if(cap) lines.push(`👥 出席：${yesTotal}/${cap}（尚餘 ${remain}）`);
-  else lines.push(`👥 出席：${yesTotal}`);
-  lines.push(`📝 後補：${waitTotal}/${WAITLIST_LIMIT}（尚餘 ${waitRemain}）`);
-  lines.push("");
-  lines.push("請到以下連結更新出席狀態：");
-  // Try reuse front-end location if hosted
-  lines.push(`${location.origin}${location.pathname.replace(/admin\.html.*$/,'index.html')}`);
-  lines.push("");
-  lines.push("Status：出席 YES / 後補 WAITLIST / 缺席 NO（「可能」唔係選項）");
-  return lines.join("\n");
+  box.textContent = `人數摘要：出席 ${yesTotal}/${cap||"-"}（剩餘 ${cap?remain:"-"}）｜後補 ${waitTotal}/${WAITLIST_LIMIT}（剩餘 ${waitRemain}）  /  Summary: YES ${yesTotal}/${cap||"-"} (rem ${cap?remain:"-"}) | WAITLIST ${waitTotal}/${WAITLIST_LIMIT} (rem ${waitRemain})`;
 }
+
 async function doAnnounce_(){
   const ta=document.getElementById("announceText");
   const msg=document.getElementById("announceMsg");
@@ -417,6 +443,8 @@ function init(){
     }catch(e){ setMsg("topMsg", e.message||String(e)); }
   });
   el("btnCreateSession").addEventListener("click", ()=>{ setMsg("createMsg",""); createSession().catch(e=>setMsg("createMsg", e.message||String(e))); });
+  const asel=document.getElementById("announceSession");
+  if(asel){ asel.addEventListener("change", ()=>updateAnnounceSummary_().catch(()=>{})); }
   const ba=document.getElementById("btnAnnounce");
   if(ba){ ba.addEventListener("click", ()=>doAnnounce_()); }
   const bc=document.getElementById("btnCopyAnnounce");
