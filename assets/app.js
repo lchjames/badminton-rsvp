@@ -9,7 +9,6 @@ const PSYCHO_LINES = [
   "名額有限；「可能」會令安排更困難。 / Spots are limited; “Maybe” makes planning harder.",
   "肯定係好人，所以請揀 YES / NO。 / Be nice: choose YES / NO.",
 ];
-const MAYBE_COOLDOWN_MS = 900;
 
 const el = (id)=>document.getElementById(id);
 let sessions = [];
@@ -59,20 +58,16 @@ async function apiPost(payload){
   return res.json();
 }
 function setMsg(t){ el("msg").textContent = t||""; }
-function setWarning(t){
+function setWarning(t, kind){
   const w=el("statusWarning");
   if(!t){ w.style.display="none"; w.textContent=""; return; }
   w.style.display="block"; w.textContent=t;
+  w.dataset.kind = kind || "";
 }
 function nextPsychoLine(){
   const line=PSYCHO_LINES[psychoIdx % PSYCHO_LINES.length];
   psychoIdx += 1;
   return line;
-}
-function setSubmitCooldown(ms){
-  const btn=el("submitBtn");
-  btn.disabled=true;
-  window.setTimeout(()=>btn.disabled=false, ms);
 }
 
 function enforceRadioAvailability(){
@@ -224,38 +219,36 @@ async function loadRsvps(){
 function wireMaybeWarning_(){
   const radios = Array.from(document.querySelectorAll('input[name="status"]'));
   if(!radios.length) return;
+
   const onChange = ()=>{
     const status=document.querySelector('input[name="status"]:checked')?.value;
     if(status==="MAYBE"){
-      setWarning(nextPsychoLine());
-    }else{
-      // do not erase other warnings caused by capacity checks; only clear if current warning is a psycho line
+      // Only warn; do not submit anything.
+      setWarning(nextPsychoLine(), "maybe");
+      setMsg("「可能 / Maybe」唔係選項。請改為「出席 / Yes」或「缺席 / No」。 / “Maybe” is not an option. Please choose Yes or No.");
+    } else {
       const w=el("statusWarning");
-      if(w && w.textContent && w.textContent.includes("Maybe")){
-        setWarning("");
-      }
+      if(w?.dataset?.kind==="maybe") setWarning("", "");
+      // clear the hint message if it was caused by MAYBE
+      const m=el("msg");
+      if(m && m.textContent && m.textContent.includes("Maybe")) setMsg("");
     }
   };
+
   radios.forEach(r=>r.addEventListener("change", onChange));
+  onChange();
 }
 
 async function init(){
   await loadSessions();
   await loadRsvps();
 
-  document.querySelectorAll('input[name="status"]').forEach(r=>r.addEventListener("change",(e)=>{
-    if(e.target.value==="MAYBE"){
-      setWarning(nextPsychoLine());
-      setMsg("提示：你揀咗「可能」，請改為「出席 / 缺席」。");
-      setSubmitCooldown(MAYBE_COOLDOWN_MS);
-    } else setWarning("");
-  }));
-
+  wireMaybeWarning_();
   el("sessionSelect")?.addEventListener("change", async (e)=>{
     currentSessionId=e.target.value;
     const s=sessions.find(x=>x.sessionId===currentSessionId);
     if(s) renderSessionInfo(s);
-    setWarning(""); setMsg("");
+    setWarning("", ""); setMsg("");
     await loadRsvps();
   });
 
@@ -275,44 +268,44 @@ async function init(){
   el("rsvpForm")?.addEventListener("submit", async (e)=>{
     e.preventDefault();
     setMsg("");
-    const btn=el("submitBtn"); btn.disabled=true;
+
     try{
-      if(!currentSessionId){ setMsg("暫時未有開放場次。"); return; }
+      if(!currentSessionId){ setMsg("暫時未有開放場次。 / No open session at the moment."); return; }
+
       const name=el("name").value.trim();
       const pax=Number(el("pax").value||1)||1;
       const note=el("note").value.trim();
       const status=document.querySelector('input[name="status"]:checked')?.value;
-      if(!name){ setMsg("請填寫姓名 / 暱稱。"); return; }
+
+      if(!name){ setMsg("請填寫姓名 / 暱稱。 / Please enter your name."); return; }
+
+      // MAYBE is a warning-only choice: never submit.
       if(status==="MAYBE"){
-        setWarning(nextPsychoLine());
-        setMsg("「可能」唔係選項，請改為「出席 / 缺席」。 / “Maybe” is not an option. Please choose YES / NO.");
-        setSubmitCooldown(MAYBE_COOLDOWN_MS);
+        setWarning(nextPsychoLine(), "maybe");
+        setMsg("「可能 / Maybe」唔係選項。請改為「出席 / Yes」或「缺席 / No」。 / “Maybe” is not an option. Please choose Yes or No.");
         return;
       }
+
+      const btn=el("submitBtn");
+      if(btn) btn.disabled=true;
+
       const res=await apiPost({action:"rsvp", sessionId: currentSessionId, name, status, pax, note});
-      if(!res?.ok){
-        const err=String(res.error||"").toLowerCase();
-        if(err.includes("full")){
-          setMsg("名額及候補名單已滿 / Full (including waitlist).");
-          setWarning("名額及候補名單已滿 / Full (including waitlist).");
-        } else if(err.includes("waitlist")){
-          setMsg(`候補已滿（最多 ${WAITLIST_LIMIT}）。`);
-          setWarning(`候補已滿（最多 ${WAITLIST_LIMIT}）。`);
-        } else setMsg(`提交失敗：${res.error||"未知錯誤"}`);
+      if(res && res.ok){
+        if(res.placement==="WAITLIST"){
+          setMsg(`已進入候補名單（最多 ${WAITLIST_LIMIT}）。 / Added to waitlist (max ${WAITLIST_LIMIT}).`);
+        }else{
+          setMsg("你已成功報名。 / You are confirmed.");
+        }
         await loadRsvps();
-        return;
+      }else{
+        setMsg((res && res.error) ? res.error : "提交失敗。 / Submit failed.");
       }
-      if(res.placement==="WAITLIST"){
-        setMsg("名額已滿，你已進入候補名單。 / The session is full. You are placed on the waitlist.");
-      } else if(res.placement==="CONFIRMED"){
-        setMsg("你已成功報名。 / You are successfully registered.");
-      } else {
-        setMsg("已更新。 / Updated.");
-      }
-      setWarning("");
-      await loadRsvps();
-    }catch(err){ setMsg("提交失敗，請稍後再試。"); }
-    finally{ btn.disabled=false; }
+    }catch(e){
+      setMsg(e?.message || String(e));
+    }finally{
+      const btn=el("submitBtn");
+      if(btn) btn.disabled=false;
+    }
   });
 }
 init();
