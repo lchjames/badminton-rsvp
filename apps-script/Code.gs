@@ -1,7 +1,7 @@
 const SPREADSHEET_ID = "1WAAWlRoyyYoq6B_cKBDaJBO_WS-YKjpnAYWMKlnk98w";
 const SHEET_SESSIONS = "sessions";
 const SHEET_RSVPS = "rsvps";
-const ADMIN_KEY = "YR-BADMINTON-ADMIN-2025";
+const ADMIN_KEY = "JamesIsTheBest";
 const WAITLIST_LIMIT = 6;
 
 function doGet(e) {
