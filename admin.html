@@ -17,7 +17,20 @@
   <p id="topMsg" class="muted"></p>
 </header>
 
+
 <main class="container">
+  <section class="card">
+    <h2>📢 一鍵公告（Copy & Paste）</h2>
+    <p class="muted">生成 WhatsApp/群組公告文字（包括人數摘要）。按一下即可複製，然後手動貼去群組。</p>
+    <div class="row">
+      <select id="announceSession" style="flex:1;"></select>
+      <button id="btnAnnounce" style="width:auto;">生成公告 / Generate</button>
+      <button id="btnCopyAnnounce" class="alt" style="width:auto;">複製 / Copy</button>
+    </div>
+    <textarea id="announceText" rows="7" style="width:100%; margin-top:10px;" placeholder="公告會喺呢度出現..."></textarea>
+    <p id="announceMsg" class="muted"></p>
+  </section>
+
   <section class="card">
     <h2>➕ 新增場次 / 新增球場（New Session / Court）</h2>
     <p class="muted">用嚟新增例外日期 / 例外球場，或者同一日新增第二個場（不同 Venue）。</p>
@@ -26,7 +39,7 @@
       <div><label>Date (YYYY-MM-DD)</label><input id="newDate" type="date" required /></div>
       <div><label>Start</label><input id="newStart" value="17:00" /></div>
       <div><label>End</label><input id="newEnd" value="19:00" /></div>
-      <div><label>Venue (Court)</label><input id="newVenue" placeholder="Goodminton" /></div>
+      <div><label>Venue (Court)</label><input id="newVenue" value="Goodminton" /></div>
       <div><label>Capacity</label><input id="newCap" type="number" min="1" value="20" /></div>
     </div>
     <label style="margin-top:12px;">Note (optional)</label>
@@ -51,7 +64,7 @@
           <option value="16">16</option>
         </select>
       </div>
-      <div><label>預設球場 Venue</label><input id="genVenue" placeholder="Goodminton" /></div>
+      <div><label>預設球場 Venue</label><input id="genVenue" value="Goodminton" /></div>
       <div><label>Capacity</label><input id="genCap" type="number" min="1" value="20" /></div>
     </div>
     <div class="row" style="margin-top:10px;">

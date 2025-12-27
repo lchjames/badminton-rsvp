@@ -1,7 +1,7 @@
 const SPREADSHEET_ID = "1WAAWlRoyyYoq6B_cKBDaJBO_WS-YKjpnAYWMKlnk98w";
 const SHEET_SESSIONS = "sessions";
 const SHEET_RSVPS = "rsvps";
-const ADMIN_KEY = "JamesIsTheBest";
+const ADMIN_KEY = "YR-BADMINTON-ADMIN-2025";
 const WAITLIST_LIMIT = 6;
 
 function doGet(e) {
@@ -393,6 +393,45 @@ function cleanupOldSessions_(days) {
  * Set up a time-driven trigger to run this function automatically.
  */
 function dailyCleanup() {
-  cleanupOldSessions_(14);
+  // Auto-close past sessions (keep history)
+  closePastSessions_();
+  // Optional: if you still want to DELETE very old sessions, run cleanupOldSessions_(14) manually.
+}
+
+
+/**
+ * Auto-close past sessions (set isOpen=FALSE) while keeping history.
+ * Rule: if session date < today (local script timezone), set isOpen FALSE.
+ */
+function closePastSessions_() {
+  const tz = Session.getScriptTimeZone();
+  const today = new Date();
+  const y=today.getFullYear(), m=today.getMonth()+1, d=today.getDate();
+  const todayLocal = new Date(y, m-1, d, 0,0,0,0);
+
+  const sh = openSheet_(SHEET_SESSIONS);
+  const values = sh.getDataRange().getValues();
+  if (values.length < 2) return { closed:0 };
+  const [header, ...rows] = values;
+  const idx = index_(header);
+
+  let closed=0;
+  for (let i=0;i<rows.length;i++){
+    const row=rows[i];
+    const dateStr = String(row[idx.date] instanceof Date ? fmtDateCell_(row[idx.date]) : row[idx.date]).trim();
+    const m2 = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if(!m2) continue;
+    const dd = new Date(Number(m2[1]), Number(m2[2])-1, Number(m2[3]), 0,0,0,0);
+    if(dd.getTime() < todayLocal.getTime()){
+      // set isOpen to FALSE if currently TRUE
+      const isOpenCell = row[idx.isOpen];
+      const isOpen = asBool_(isOpenCell);
+      if(isOpen){
+        sh.getRange(i+2, idx.isOpen+1).setValue("FALSE");
+        closed++;
+      }
+    }
+  }
+  return { closed };
 }
 

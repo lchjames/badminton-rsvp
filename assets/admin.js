@@ -55,6 +55,22 @@ function fillSessionSelects(){
       rsvpSel.appendChild(opt);
     });
 }
+
+function fillAnnounceSelects_(){
+  const a=document.getElementById("announceSession");
+  if(!a) return;
+  a.innerHTML="";
+  const list = sessions.slice().sort((x,y)=>normalizeDateYYYYMMDD(x.date).localeCompare(normalizeDateYYYYMMDD(y.date)) || normalizeTimeHHMM(x.start).localeCompare(normalizeTimeHHMM(y.start)));
+  for(const s of list){
+    const opt=document.createElement("option");
+    opt.value=s.sessionId;
+    opt.textContent=`${normalizeDateYYYYMMDD(s.date)} ${normalizeTimeHHMM(s.start)} · ${s.venue}${s.isOpen?" · OPEN":""}`;
+    a.appendChild(opt);
+  }
+  const pick = pickClosestOpenSessionIdAdmin_();
+  if(pick) a.value = pick;
+}
+
 function renderSessionsTable(){
   const showClosed=el("showClosed").checked;
   const view=sessions.filter(s=>showClosed?true:!!s.isOpen);
@@ -136,6 +152,7 @@ async function loadSessions(){
   const data=await apiGet({action:"sessions"});
   sessions=data.sessions||[];
   fillSessionSelects();
+  fillAnnounceSelects_();
   renderSessionsTable();
 }
 async function createSession(){
@@ -190,7 +207,10 @@ async function loadRsvps(){
 
 
 function toISODate_(d){
-  return d.toISOString().split("T")[0];
+  const y=d.getFullYear();
+  const m=String(d.getMonth()+1).padStart(2,"0");
+  const dd=String(d.getDate()).padStart(2,"0");
+  return `${y}-${m}-${dd}`;
 }
 function parseISODate_(s){
   const m=String(s||"").match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -262,6 +282,109 @@ async function generateSundays_(){
 }
 
 
+
+function dedupeLatestByName_(rows){
+  const map=new Map();
+  for(const r of (rows||[])){
+    const k=String(r.name||"").trim().toLowerCase();
+    if(!k) continue;
+    // admin_listRsvps returns timestamp string
+    map.set(k, r);
+  }
+  return Array.from(map.values());
+}
+function sumByStatus_(rows, status){
+  const S=String(status||"").toUpperCase();
+  return (rows||[]).filter(r=>String(r.status||"").toUpperCase()===S)
+    .reduce((s,r)=>s+(Number(r.pax)||1),0);
+}
+function pickClosestOpenSessionIdAdmin_(){
+  const now=Date.now();
+  const open=sessions.filter(s=>!!s.isOpen);
+  if(!open.length) return (sessions[0]||{}).sessionId || "";
+  const ms = (s)=>{
+    const date=normalizeDateYYYYMMDD(s.date);
+    const start=normalizeTimeHHMM(s.start);
+    const dm=date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    const tm=start.match(/^(\d{2}):(\d{2})$/);
+    if(!dm||!tm) return NaN;
+    return new Date(Number(dm[1]),Number(dm[2])-1,Number(dm[3]),Number(tm[1]),Number(tm[2]),0,0).getTime();
+  };
+  const sorted=open.map(s=>({s,ms:ms(s)})).filter(x=>!isNaN(x.ms)).sort((a,b)=>a.ms-b.ms);
+  if(!sorted.length) return open[0].sessionId;
+  const upcoming=sorted.find(x=>x.ms>=now);
+  return (upcoming?upcoming.s.sessionId:sorted[sorted.length-1].s.sessionId) || "";
+}
+async function buildAnnouncement_(){
+  const adminKey=ensureKey();
+  const sid = document.getElementById("announceSession").value || pickClosestOpenSessionIdAdmin_();
+  if(!sid) throw new Error("未有場次可生成公告");
+  const s = sessions.find(x=>x.sessionId===sid);
+  if(!s) throw new Error("session not found");
+
+  const data = await apiPost({action:"admin_listRsvps", adminKey, sessionId:sid});
+  if(!data.ok) throw new Error(data.error||"list failed");
+  const uniq = dedupeLatestByName_(data.rsvps||[]);
+  const yesTotal = sumByStatus_(uniq,"YES");
+  const waitTotal = sumByStatus_(uniq,"WAITLIST");
+  const cap = Number(s.capacity||0)||0;
+  const remain = cap? Math.max(0, cap-yesTotal) : 0;
+  const waitRemain = Math.max(0, WAITLIST_LIMIT-waitTotal);
+
+  const date = normalizeDateYYYYMMDD(s.date);
+  const start = normalizeTimeHHMM(s.start);
+  const end = normalizeTimeHHMM(s.end);
+  const venue = String(s.venue||"").trim();
+  const title = String(s.title||"YR Badminton").trim() || "YR Badminton";
+
+  const lines = [];
+  lines.push(`📢 ${title} 打波登記 / RSVP`);
+  lines.push(`🗓️ ${date} (Sun) ${start}-${end}`);
+  lines.push(`📍 ${venue}`);
+  if(cap) lines.push(`👥 出席：${yesTotal}/${cap}（尚餘 ${remain}）`);
+  else lines.push(`👥 出席：${yesTotal}`);
+  lines.push(`📝 後補：${waitTotal}/${WAITLIST_LIMIT}（尚餘 ${waitRemain}）`);
+  lines.push("");
+  lines.push("請到以下連結更新出席狀態：");
+  // Try reuse front-end location if hosted
+  lines.push(`${location.origin}${location.pathname.replace(/admin\.html.*$/,'index.html')}`);
+  lines.push("");
+  lines.push("Status：出席 YES / 後補 WAITLIST / 缺席 NO（「可能」唔係選項）");
+  return lines.join("\n");
+}
+async function doAnnounce_(){
+  const ta=document.getElementById("announceText");
+  const msg=document.getElementById("announceMsg");
+  msg.textContent="";
+  ta.value="生成中...";
+  try{
+    const text = await buildAnnouncement_();
+    ta.value=text;
+    msg.textContent="已生成公告。";
+  }catch(e){
+    ta.value="";
+    msg.textContent = e.message || String(e);
+  }
+}
+async function copyAnnounce_(){
+  const ta=document.getElementById("announceText");
+  const msg=document.getElementById("announceMsg");
+  try{
+    ta.select();
+    ta.setSelectionRange(0, ta.value.length);
+    await navigator.clipboard.writeText(ta.value||"");
+    msg.textContent="已複製。";
+  }catch(e){
+    // fallback
+    try{
+      document.execCommand("copy");
+      msg.textContent="已複製。";
+    }catch(_){
+      msg.textContent="複製失敗，請手動選取複製。";
+    }
+  }
+}
+
 function init(){
   const today = new Date().toISOString().split("T")[0];
   const nd = document.getElementById("newDate"); if(nd){ nd.setAttribute("min", today); nd.value = today; }
@@ -277,6 +400,10 @@ function init(){
   el("btnCreateSession").addEventListener("click", ()=>{ setMsg("createMsg",""); createSession().catch(e=>setMsg("createMsg", e.message||String(e))); });
   const gsd=document.getElementById("genStartDate");
   if(gsd){ gsd.addEventListener("change", ()=>forceSundayInput_()); }
+  const ba=document.getElementById("btnAnnounce");
+  if(ba){ ba.addEventListener("click", ()=>doAnnounce_()); }
+  const bc=document.getElementById("btnCopyAnnounce");
+  if(bc){ bc.addEventListener("click", ()=>copyAnnounce_()); }
   const bg=document.getElementById("btnGenSundays");
   if(bg){ bg.addEventListener("click", ()=>{ setMsg("genMsg",""); generateSundays_().catch(e=>setMsg("genMsg", e.message||String(e))); }); }
   el("showClosed").addEventListener("change", ()=>renderSessionsTable());
