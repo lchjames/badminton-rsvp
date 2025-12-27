@@ -26,6 +26,7 @@ function doPost(e) {
     if (action === "admin_updatesession") return json_(adminUpdateSession_(body));
     if (action === "admin_setonlyopen") return json_(adminSetOnlyOpen_(body));
     if (action === "admin_listrsvps") return json_(adminListRsvps_(body));
+    if (action === "admin_deletesession") return json_(adminDeleteSession_(body));
 
     return json_({ ok:false, error:"unknown action" });
   } catch (err) {
@@ -288,3 +289,110 @@ function adminListRsvps_(p) {
   }
   return { ok:true, rsvps: out };
 }
+
+
+function adminDeleteSession_(p) {
+  if (!isAdmin_(p.adminKey)) return { ok:false, error:"unauthorized" };
+  const sessionId = String(p.sessionId||"").trim();
+  if (!sessionId) return { ok:false, error:"missing sessionId" };
+
+  // delete session row
+  const shS = openSheet_(SHEET_SESSIONS);
+  const values = shS.getDataRange().getValues();
+  if (values.length < 2) return { ok:false, error:"no sessions" };
+  const [header, ...rows] = values;
+  const idx = index_(header);
+
+  let deleted = false;
+  for (let i=rows.length-1; i>=0; i--) {
+    if (String(rows[i][idx.sessionId]) === sessionId) {
+      shS.deleteRow(i+2);
+      deleted = true;
+      break;
+    }
+  }
+  if (!deleted) return { ok:false, error:"session not found" };
+
+  // delete ALL rsvps for that session
+  const shR = openSheet_(SHEET_RSVPS);
+  const rValues = shR.getDataRange().getValues();
+  if (rValues.length >= 2) {
+    const [rHeader, ...rRows] = rValues;
+    const rIdx = index_(rHeader);
+    for (let i=rRows.length-1; i>=0; i--) {
+      if (String(rRows[i][rIdx.sessionId]) === sessionId) {
+        shR.deleteRow(i+2);
+      }
+    }
+  }
+  return { ok:true };
+}
+
+
+/**
+ * Cleanup old sessions and related RSVPs.
+ * Deletes sessions whose date is older than N days (default 14) and removes all RSVPs for them.
+ * You can run this manually in Apps Script or attach it to a time-driven trigger (daily).
+ */
+function cleanupOldSessions_(days) {
+  const KEEP_DAYS = (days === undefined || days === null) ? 14 : Number(days);
+  const tz = Session.getScriptTimeZone();
+  const today = new Date();
+  const cutoff = new Date(today.getTime() - KEEP_DAYS*24*60*60*1000);
+
+  const shS = openSheet_(SHEET_SESSIONS);
+  const sValues = shS.getDataRange().getValues();
+  if (sValues.length < 2) return { removedSessions:0, removedRsvps:0 };
+  const [sHeader, ...sRows] = sValues;
+  const sIdx = index_(sHeader);
+
+  // Collect sessions to remove
+  const toRemove = [];
+  for (let i=0;i<sRows.length;i++){
+    const sid = String(sRows[i][sIdx.sessionId]||"").trim();
+    if(!sid) continue;
+    const dCell = sRows[i][sIdx.date];
+    let dStr = fmtDateCell_(dCell);
+    // parse yyyy-MM-dd
+    const m = String(dStr).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if(!m) continue;
+    const d = new Date(Number(m[1]), Number(m[2])-1, Number(m[3]), 0,0,0,0);
+    if (d.getTime() < cutoff.getTime()) {
+      toRemove.push({ sid, rowNumber:i+2 });
+    }
+  }
+
+  // Remove sessions from bottom to top (row numbers shift)
+  toRemove.sort((a,b)=>b.rowNumber-a.rowNumber);
+  for (const x of toRemove) shS.deleteRow(x.rowNumber);
+
+  // Remove RSVPs for removed sessions
+  let removedRsvps=0;
+  if (toRemove.length){
+    const removedSet = {};
+    toRemove.forEach(x=>removedSet[x.sid]=true);
+    const shR=openSheet_(SHEET_RSVPS);
+    const rValues=shR.getDataRange().getValues();
+    if(rValues.length>=2){
+      const [rHeader, ...rRows]=rValues;
+      const rIdx=index_(rHeader);
+      for(let i=rRows.length-1;i>=0;i--){
+        const sid=String(rRows[i][rIdx.sessionId]||"").trim();
+        if(removedSet[sid]){
+          shR.deleteRow(i+2);
+          removedRsvps++;
+        }
+      }
+    }
+  }
+  return { removedSessions: toRemove.length, removedRsvps };
+}
+
+/**
+ * Entry point for Apps Script trigger (daily).
+ * Set up a time-driven trigger to run this function automatically.
+ */
+function dailyCleanup() {
+  cleanupOldSessions_(14);
+}
+

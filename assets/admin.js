@@ -82,6 +82,7 @@ function renderSessionsTable(){
           <div class="cell"><div class="actions">
             <button data-act="save">儲存</button>
             <button class="alt" data-act="openOnly">唯一開放</button>
+            <button class="danger" data-act="delete">刪除</button>
           </div></div>
         </div>
       `).join("")}
@@ -114,6 +115,12 @@ function renderSessionsTable(){
           if(act==="openOnly"){
             const res=await apiPost({action:"admin_setOnlyOpen", adminKey, sessionId:sid});
             if(!res.ok) throw new Error(res.error||"setOnlyOpen failed");
+            await loadSessions();
+          }
+                  if(act==="delete"){
+            if(!confirm("確定刪除？同時會清走該場所有 bookings。")) return;
+            const res=await apiPost({action:"admin_deleteSession", adminKey, sessionId:sid});
+            if(!res.ok) throw new Error(res.error||"delete failed");
             await loadSessions();
           }
         }catch(e){
@@ -197,13 +204,31 @@ function nextSunday_(fromDate){
   d.setDate(d.getDate()+add);
   return d;
 }
+
+function forceSundayInput_(){
+  const gs=document.getElementById("genStartDate");
+  if(!gs) return;
+  const v=gs.value;
+  const d=parseISODate_(v);
+  if(!d) return;
+  if(d.getDay()!==0){
+    const s=nextSunday_(d);
+    gs.value = toISODate_(s);
+    setMsg("genMsg", "已自動調整為星期日 / Auto-adjusted to Sunday.");
+  }
+}
+
 async function generateSundays_(){
   const adminKey=ensureKey();
   const startStr=el("genStartDate").value;
   let start=parseISODate_(startStr);
+  // lock generator to Sunday
+  if(start && start.getDay()!==0){ start = nextSunday_(start); }
+
   if(!start) throw new Error("請填「從哪一日開始」日期");
   start = nextSunday_(start);
 
+  el("genStartDate").value = toISODate_(start);
   const weeks = Number(el("genWeeks").value||8)||8;
   const venue = (el("genVenue").value||"").trim();
   if(!venue) throw new Error("請填預設 Venue");
@@ -250,6 +275,8 @@ function init(){
     }catch(e){ setMsg("topMsg", e.message||String(e)); }
   });
   el("btnCreateSession").addEventListener("click", ()=>{ setMsg("createMsg",""); createSession().catch(e=>setMsg("createMsg", e.message||String(e))); });
+  const gsd=document.getElementById("genStartDate");
+  if(gsd){ gsd.addEventListener("change", ()=>forceSundayInput_()); }
   const bg=document.getElementById("btnGenSundays");
   if(bg){ bg.addEventListener("click", ()=>{ setMsg("genMsg",""); generateSundays_().catch(e=>setMsg("genMsg", e.message||String(e))); }); }
   el("showClosed").addEventListener("change", ()=>renderSessionsTable());
