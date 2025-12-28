@@ -4,108 +4,66 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>YR Badminton RSVP</title>
-  <link rel="stylesheet" href="assets/style.css" />
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <div class="brand-title">YR Badminton</div>
-      <div class="brand-sub">打波登記 / RSVP</div>
-    </div>
-    <nav class="topnav">
-      <a class="link" href="admin.html">Admin</a>
-    </nav>
-  </header>
+<header class="container">
+  <h1>YR Badminton 出席登記<br><span class="muted">YR Badminton RSVP</span></h1>
+  <p class="muted">每星期日 17:00–19:00（例外情況請留意公告）<br>Every Sunday 17:00–19:00 (check announcements for exceptions)</p>
+  <p class="muted"><a href="admin.html">管理員頁面 / Admin</a></p>
+</header>
 
-  <main class="container">
-    <section class="card">
-      <h1>打波登記 / RSVP</h1>
-      <p class="muted">自動揀最近的開放場次（如有）。<span class="small">Auto-select the closest open session.</span></p>
+<main class="container">
+  <section class="card">
+    <h2>選擇場次<br><span class="muted">Select Session</span></h2>
+    <select id="sessionSelect"></select>
+    <div id="sessionInfo" class="muted" style="margin-top:10px;"></div>
+  </section>
 
-      <div class="grid-2">
-        <div class="field">
-          <label for="sessionSelect">選擇場次 / Session</label>
-          <select id="sessionSelect"></select>
-          <div id="sessionMeta" class="muted small"></div>
-        </div>
+  <section class="card" id="rsvpCard">
+    <h2>登記<br><span class="muted">RSVP</span></h2>
 
-        <div class="field">
-          <label>名額摘要 / Summary</label>
-          <div class="summary">
-            <div><span class="tag">出席 / YES</span> <span id="sumYes">-</span></div>
-            <div><span class="tag">候補 / Waitlist</span> <span id="sumWait">-</span></div>
-          </div>
-          <div class="muted small">候補係系統自動分配（唔係選項）。 / Waitlist is automatic (not a choice).</div>
-        </div>
+    <form id="rsvpForm" novalidate>
+      <label>姓名 / 暱稱<br><span class="muted">Name / Nickname</span></label>
+      <input id="name" required placeholder="Name / Nickname (e.g. James)" autocomplete="name" />
+
+      <label>狀態<br><span class="muted">Status</span></label>
+      <div class="row">
+<label class="chip"><input type="radio" name="status" value="MAYBE"> 可能 / Maybe</label>
+        <label class="chip"><input type="radio" name="status" value="NO"> 缺席 / No</label>
       </div>
 
-      <hr class="sep" />
+      <div id="statusWarning" class="warning" style="display:none;"></div>
 
-      <form id="rsvpForm">
-        <div class="grid-2">
-          <div class="field">
-            <label for="name">姓名 / Name</label>
-            <input id="name" required placeholder="例如：James / e.g. James" autocomplete="name" />
-          </div>
+      <label>人數<br><span class="muted">Number of players</span></label>
+      <input id="pax" type="number" min="1" value="1" inputmode="numeric" />
 
-          <div class="field">
-            <label for="pax">人數 / People</label>
-            <input id="pax" type="number" min="1" max="20" value="1" />
-          </div>
-        </div>
+      <label>備註（可選）<br><span class="muted">Note (optional)</span></label>
+      <input id="note" placeholder="e.g. Late / bringing a friend" />
 
-        <div class="field">
-          <label>狀態 / Status</label>
-          <div class="chips">
-            <label class="chip"><input type="radio" name="status" value="YES" checked /> 出席 / Yes</label>
-            <label class="chip"><input type="radio" name="status" value="MAYBE" /> 可能 / Maybe</label>
-            <label class="chip"><input type="radio" name="status" value="NO" /> 缺席 / No</label>
-          </div>
-          <div id="maybeWarning" class="warning" style="display:none;"></div>
-        </div>
-
-        <div class="field">
-          <label for="note">備註 / Note (optional)</label>
-          <input id="note" placeholder="例如：遲到 10 分鐘 / late 10 mins" />
-        </div>
-
-        <div class="actions">
-          <button id="submitBtn" class="btn primary" type="submit">提交 / Submit</button>
-          <button id="cancelBtn" class="btn" type="button">取消出席（改為 NO） / Cancel</button>
-        </div>
-
-        <div id="msg" class="toast" aria-live="polite"></div>
-      </form>
-    </section>
-
-    <section class="card">
-      <h2>目前出席名單 / Current Attendees</h2>
-
-      <div id="lists">
-        <div class="subcard">
-          <div class="subhead">
-            <div class="subtitle">出席 / YES</div>
-            <div class="muted small" id="yesRemain"></div>
-          </div>
-          <div id="yesList" class="list"></div>
-        </div>
-
-        <div class="subcard">
-          <div class="subhead">
-            <div class="subtitle">候補 / Waitlist</div>
-            <div class="muted small" id="waitRemain"></div>
-          </div>
-          <div id="waitList" class="list"></div>
-        </div>
+      <div class="row" style="margin-top:12px;">
+        <button type="submit" id="submitBtn" style="flex:1;">提交 / Update</button>
+        <button type="button" id="cancelBtn" class="alt" style="flex:1;">取消出席 / Cancel</button>
       </div>
-    </section>
 
-    <footer class="footer muted">
-      <div>YR Badminton RSVP · Static site on GitHub Pages</div>
-      <div class="small">如見到資料唔更新，請用 <code>?v=1</code> 形式避 cache / add <code>?v=1</code> to bypass cache.</div>
-    </footer>
-  </main>
+      <p id="existingInfo" class="muted" style="margin-top:10px;"></p>
+      <p id="msg" class="muted" style="margin-top:10px;"></p>
+    </form>
+  </section>
 
-  <script src="assets/app.js"></script>
+  <section class="card">
+    <h2>目前出席名單<br><span class="muted">Current Attendees</span></h2>
+    <div id="summary" class="muted"></div>
+    <div id="list"></div>
+  </section>
+
+  <section class="card">
+    <h2>候補名單<br><span class="muted">Waitlist</span></h2>
+    <div id="waitSummary" class="muted"></div>
+    <div id="waitList"></div>
+  </section>
+</main>
+
+<script src="assets/app.js"></script>
 </body>
 </html>
