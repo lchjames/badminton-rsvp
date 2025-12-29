@@ -5,7 +5,7 @@
  * 3) Basic UI contract guard to prevent silent breakage.
  */
 
-const API_BASE = window.API_BASE || ""; // set in README or directly edit this value if needed
+const API_BASE = "https://script.google.com/macros/s/AKfycby6BM-TP-4EnP7usmJigxuUrWtsTeWw83oRYPHQPXhfIsRmLjhbisIMeVNOngQkr9uG/exec";
 const WAITLIST_LIMIT = 6;
 
 /* ===== Psycho lines (bilingual) ===== */
