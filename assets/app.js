@@ -46,7 +46,7 @@ async function apiGet(params) {
 async function apiPost(body) {
   const r = await fetch(API_BASE, {
     method:"POST",
-    headers:{"Content-Type":"application/json"},
+    headers:{"Content-Type":"text/plain;charset=utf-8"},
     body: JSON.stringify(body||{})
   });
   const t = await r.text();

@@ -17,7 +17,7 @@ function doGet(e) {
 
 function doPost(e) {
   try {
-    const body = JSON.parse((e.postData && e.postData.contents) ? e.postData.contents : "{}");
+    const body = JSON.parse((e && e.postData && e.postData.contents) ? e.postData.contents : "{}");
     const action = String(body.action || "").toLowerCase();
 
     if (action === "rsvp") return json_(addRsvp_(body));
@@ -35,7 +35,13 @@ function doPost(e) {
 }
 
 function json_(obj) {
-  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
+  return ContentService
+    .createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON)
+    // CORS for GitHub Pages
+    .setHeader("Access-Control-Allow-Origin", "*")
+    .setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+    .setHeader("Access-Control-Allow-Headers", "Content-Type");
 }
 function isAdmin_(k) { return String(k||"") === String(ADMIN_KEY); }
 function openSheet_(name) {
@@ -543,3 +549,9 @@ function closePastSessions_() {
   return { closed };
 }
 
+
+
+function doOptions(e){
+  // Preflight support (may not be invoked on all deployments)
+  return json_({ ok:true });
+}
