@@ -2,6 +2,27 @@
 const API_BASE = "https://script.google.com/macros/s/AKfycbwv5Db3ePyGuiTDOGFDM8joTprsOmL3xpymGPVOv3ocaPeTb-QTEPySqafNxY_LhJwm/exec";
 const WAITLIST_LIMIT = 6;
 
+
+
+/* ===== UI Contract Guard (Lock Structure) ===== */
+const REQUIRED_STATUS_VALUES = ["YES", "NO", "MAYBE"];
+function assertUiContract_() {
+  const missing = [];
+  const reqIds = ["sessionSelect","name","pax","statusMsg","submitMsg","list","waitList","summary","waitSummary"];
+  reqIds.forEach(id => { if (!document.getElementById(id)) missing.push(`#${id}`); });
+
+  const radios = Array.from(document.querySelectorAll('input[name="status"][type="radio"]'));
+  const values = radios.map(r => String(r.value||"").trim().toUpperCase());
+  REQUIRED_STATUS_VALUES.forEach(v => { if (!values.includes(v)) missing.push(`status:${v}`); });
+
+  if (missing.length) {
+    const msg = "頁面結構錯誤：缺少必要元件/選項：" + missing.join(", ")
+      + "。請更新 index.html 以包含 YES/NO/MAYBE。";
+    const top = document.getElementById("topMsg") || document.getElementById("submitMsg");
+    if (top) top.textContent = msg;
+    throw new Error(msg);
+  }
+}
 const PSYCHO_LINES = [
   "「可能」唔係選項。請揀「出席 / 候補 / 缺席」。 / “Maybe” is not an option. Please choose YES / NO.",
   "你揀「可能」= 未決定；隊伍唔會為你預留位。 / “Maybe” = undecided; no spot will be reserved.",
@@ -227,9 +248,13 @@ function wireMaybeWarning_(){
   if(!radios.length) return;
   const onChange = ()=>{
     const status=document.querySelector('input[name="status"]:checked')?.value;
-    if(status==="MAYBE"){
-      setWarning(nextPsychoLine());
-    }else{
+    if (status === "MAYBE") {
+  const line = nextPsychoLine();
+  setMsg("statusMsg", line);
+  setMsg("submitMsg", "「可能 / MAYBE」不會提交登記，請改選 YES 或 NO。
+'Maybe' will NOT submit. Please choose YES or NO.");
+  return; // MUST NOT call API
+}else{
       // do not erase other warnings caused by capacity checks; only clear if current warning is a psycho line
       const w=el("statusWarning");
       if(w && w.textContent && w.textContent.includes("Maybe")){
@@ -241,7 +266,9 @@ function wireMaybeWarning_(){
 }
 
 async function init(){
-  await loadSessions();
+  
+  assertUiContract_();
+await loadSessions();
   await loadRsvps();
 
   document.querySelectorAll('input[name="status"]').forEach(r=>r.addEventListener("change",(e)=>{
@@ -303,17 +330,16 @@ async function init(){
         await loadRsvps();
         return;
       }
-      if(res.placement==="WAITLIST"){
-    setMsg("名額已滿，你已進入候補名單。 / The session is full. You are placed on the waitlist.");
-  } else if(res.placement==="CONFIRMED"){
-    setMsg("你已成功報名。 / You are successfully registered.");
-  } else if(res.placement==="OVERFLOW"){
-    setMsg("已記錄，但已超出候補上限。 / Recorded but overflowed waitlist.");
-  } else if(res.placement==="NO"){
-    setMsg("已更新為缺席（NO）。 / Updated to NO.");
-  } else {
-    setMsg("已更新。 / Updated.");
-  }
+      const placement = String(res.placement || "").toUpperCase();
+if(placement==="WAITLIST"){
+  setMsg("名額已滿，你已進入候補名單。 / The session is full. You are placed on the waitlist.");
+} else if(placement==="CONFIRMED"){
+  setMsg("你已成功報名。 / You are successfully registered.");
+} else if(placement==="OVERFLOW"){
+  setMsg("已記錄，但已超出候補上限 / Recorded but overflowed waitlist");
+} else {
+  setMsg("已更新。 / Updated.");
+}
       setWarning("");
       await loadRsvps();
     }catch(err){ setMsg("提交失敗，請稍後再試。"); }

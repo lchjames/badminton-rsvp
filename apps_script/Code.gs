@@ -1,509 +1,545 @@
-/**
- * YR Badminton RSVP (Scheme 2)
- * - Backend returns placement after RSVP: CONFIRMED / WAITLIST / OVERFLOW / NO
- * - Sunday-only session dates enforced on create/update
- * - Admin: create/update/delete session (cascade delete RSVPs); list RSVPs (dedup latest per name)
- *
- * Sheet tabs:
- *  Sessions: sessionId,title,date,start,end,venue,capacity,note,isOpen,createdAt,updatedAt
- *  RSVPs:    rowId,sessionId,name,status,pax,note,timestamp
- */
-
-// ====== CONFIG (HARD-CODED) ======
 const SPREADSHEET_ID = "1WAAWlRoyyYoq6B_cKBDaJBO_WS-YKjpnAYWMKlnk98w";
-const ADMIN_KEY = "CHANGE_THIS_TO_YOUR_ADMIN_KEY";
+const SHEET_SESSIONS = "sessions";
+const SHEET_RSVPS = "rsvps";
+const ADMIN_KEY = "YR-BADMINTON-ADMIN-2025";
 const WAITLIST_LIMIT = 6;
 
-// ====== ENTRY ======
-function doGet(e){
-  try{
-    const action = String((e && e.parameter && e.parameter.action) || "").trim().toLowerCase();
-    if(action === "sessions") return json_({ ok:true, sessions: listSessions_(true) });
-    if(action === "sessions_all") return json_({ ok:true, sessions: listSessions_(false) });
-    if(action === "list") {
-      const sid = String((e.parameter||{}).sessionId || "").trim();
-      return json_(listRsvpsPublic_(sid));
-    }
+function doGet(e) {
+  try {
+    const action = String((e && e.parameter && e.parameter.action) || "").toLowerCase();
+    if (action === "sessions") return json_({ ok:true, sessions:getSessions_() });
+    if (action === "list") return json_(getRsvpsPublic_((e.parameter||{}).sessionId));
     return json_({ ok:false, error:"unknown action" });
-  }catch(err){
+  } catch (err) {
     return json_({ ok:false, error:String(err && err.message ? err.message : err) });
   }
 }
 
-function doPost(e){
-  try{
-    const body = JSON.parse((e && e.postData && e.postData.contents) || "{}");
-    const action = String(body.action || "").trim();
+function doPost(e) {
+  try {
+    const body = JSON.parse((e.postData && e.postData.contents) ? e.postData.contents : "{}");
+    const action = String(body.action || "").toLowerCase();
 
-    if(action === "rsvp"){
-      return json_(upsertRsvpWithPlacement_(body));
-    }
+    if (action === "rsvp") return json_(addRsvp_(body));
 
-    if(String(body.adminKey||"") !== ADMIN_KEY){
-      return json_({ ok:false, error:"unauthorized" });
-    }
-
-    if(action === "admin_createSession") return json_(adminCreateSession_(body));
-    if(action === "admin_updateSession") return json_(adminUpdateSession_(body));
-    if(action === "admin_deleteSession") return json_(adminDeleteSession_(String(body.sessionId||"").trim()));
-    if(action === "admin_listRsvps") return json_(adminListRsvps_(body));
-    if(action === "admin_updateRsvp") return json_(adminUpdateRsvp_(body));
-    if(action === "admin_deleteRsvp") return json_(adminDeleteRsvp_(body));
+    if (action === "admin_createsession") return json_(adminCreateSession_(body));
+    if (action === "admin_updatesession") return json_(adminUpdateSession_(body));
+    if (action === "admin_setonlyopen") return json_(adminSetOnlyOpen_(body));
+    if (action === "admin_listrsvps") return json_(adminListRsvps_(body));
+    if (action === "admin_deletesession") return json_(adminDeleteSession_(body));
 
     return json_({ ok:false, error:"unknown action" });
-  }catch(err){
+  } catch (err) {
     return json_({ ok:false, error:String(err && err.message ? err.message : err) });
   }
 }
 
-// ====== JSON ======
-function json_(obj){
-  return ContentService.createTextOutput(JSON.stringify(obj))
-    .setMimeType(ContentService.MimeType.JSON);
+function json_(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
 }
-
-// ====== SHEET HELPERS ======
-function ss_(){ return SpreadsheetApp.openById(SPREADSHEET_ID); }
-
-function ensureSheets_(){
-  const ss = ss_();
-  const sessions = ensureSheet_(ss, "Sessions", ["sessionId","title","date","start","end","venue","capacity","note","isOpen","createdAt","updatedAt"]);
-  const rsvps = ensureSheet_(ss, "RSVPs", ["rowId","sessionId","name","status","pax","note","timestamp"]);
-  return { ss, sessions, rsvps };
-}
-
-function ensureSheet_(ss, name, headers){
-  let sh = ss.getSheetByName(name);
-  if(!sh){
-    sh = ss.insertSheet(name);
-    sh.appendRow(headers);
-  } else {
-    // Ensure header row has at least these headers (do not overwrite existing user data)
-    const row1 = sh.getRange(1,1,1,Math.max(headers.length, sh.getLastColumn())).getValues()[0];
-    const have = row1.map(v=>String(v||"").trim());
-    const missing = headers.filter(h=>!have.includes(h));
-    if(missing.length){
-      sh.getRange(1, sh.getLastColumn()+1, 1, missing.length).setValues([missing]);
-    }
-  }
+function isAdmin_(k) { return String(k||"") === String(ADMIN_KEY); }
+function openSheet_(name) {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sh = ss.getSheetByName(name);
+  if (!sh) throw new Error("Sheet not found: " + name);
   return sh;
 }
-
-function nowIso_(){ return new Date().toISOString(); }
-
-function isSunday_(yyyyMMdd){
-  const d = new Date(String(yyyyMMdd).trim()+"T00:00:00");
-  return d.getDay() === 0;
+function index_(headerRow) {
+  const map = {};
+  headerRow.forEach((h,i)=> map[String(h).trim()] = i);
+  return map;
+}
+function asBool_(v) {
+  const s = String(v||"").toUpperCase().trim();
+  return s === "TRUE" || s === "1" || s === "YES";
+}
+function fmtDateCell_(v) {
+  if (v instanceof Date) return Utilities.formatDate(v, Session.getScriptTimeZone(), "yyyy-MM-dd");
+  return String(v||"").trim();
+}
+function fmtTimeCell_(v) {
+  if (v instanceof Date) return Utilities.formatDate(v, Session.getScriptTimeZone(), "HH:mm");
+  return String(v||"").trim();
+}
+function appendRowAsText_(sheet, rowValues) {
+  const lastRow = sheet.getLastRow();
+  const range = sheet.getRange(lastRow+1, 1, 1, rowValues.length);
+  range.setNumberFormat("@");
+  range.setValues([rowValues.map(v => String(v ?? ""))]);
 }
 
-function norm_(s){ return String(s||"").trim().toLowerCase(); }
-
-function parseTs_(v){
-  if(v instanceof Date) return v.getTime();
-  const s = String(v||"").trim();
-  if(!s) return 0;
-  // support "YYYY-MM-DD HH:mm:ss" or ISO
-  const t = Date.parse(s.includes("T") ? s : s.replace(" ", "T"));
-  return isNaN(t) ? 0 : t;
+function getSessions_() {
+  const sh = openSheet_(SHEET_SESSIONS);
+  const values = sh.getDataRange().getValues();
+  if (values.length < 2) return [];
+  const [header, ...rows] = values;
+  const idx = index_(header);
+  return rows.filter(r=>r[idx.sessionId]).map(r=>({
+    sessionId:String(r[idx.sessionId]),
+    title:String(r[idx.title]||""),
+    date:fmtDateCell_(r[idx.date]),
+    start:fmtTimeCell_(r[idx.start]),
+    end:fmtTimeCell_(r[idx.end]),
+    venue:String(r[idx.venue]||""),
+    capacity:Number(String(r[idx.capacity]||"0"))||0,
+    note:String(r[idx.note]||""),
+    isOpen:asBool_(r[idx.isOpen]),
+  }));
 }
+function getSessionById_(sessionId) {
+  const list = getSessions_();
+  return list.find(s=>String(s.sessionId)===String(sessionId)) || null;
+}
+function getRsvpsPublic_(sessionId) {
+  sessionId = String(sessionId||"").trim();
+  if (!sessionId) return { ok:false, error:"missing sessionId" };
+  const session = getSessionById_(sessionId);
+  const cap = session ? (Number(session.capacity||0)||0) : 0;
 
-// ====== SESSIONS ======
-function listSessions_(openOnly){
-  const { sessions } = ensureSheets_();
-  const data = sessions.getDataRange().getValues();
-  const head = data.shift();
-  const idx = indexMap_(head);
-  const out = [];
-  for(const r of data){
-    const sid = String(r[idx.sessionid]||"").trim();
-    if(!sid) continue;
-    const isOpen = String(r[idx.isopen]||"").toUpperCase() === "TRUE";
-    if(openOnly && !isOpen) continue;
-    out.push({
-      sessionId: sid,
-      title: String(r[idx.title]||""),
-      date: fmtDateCell_(r[idx.date]),
-      start: String(r[idx.start]||""),
-      end: String(r[idx.end]||""),
-      venue: String(r[idx.venue]||""),
-      capacity: Number(r[idx.capacity]||0) || 0,
-      note: String(r[idx.note]||""),
-      isOpen
-    });
+  const sh = openSheet_(SHEET_RSVPS);
+  const values = sh.getDataRange().getValues();
+  if (values.length < 2) return { ok:true, rsvps: [], current: [], summary:{ cap:cap, confirmedPax:0, waitlistPax:0 } };
+  const [header, ...rows] = values;
+  const idx = index_(header);
+  const out = rows.filter(r=>String(r[idx.sessionId])===sessionId).map(r=>({
+    timestamp:(r[idx.timestamp] instanceof Date) ? r[idx.timestamp].toISOString() : String(r[idx.timestamp]||""),
+    sessionId:String(r[idx.sessionId]||""),
+    name:String(r[idx.name]||""),
+    status:String(r[idx.status]||""),
+    pax:Number(String(r[idx.pax]||"1"))||1,
+    note:String(r[idx.note]||""),
+  }));
+
+  const buckets = computeBuckets_(sessionId, cap, WAITLIST_LIMIT);
+  const current = [];
+  const map = latestMapWithOverride_(sessionId, null, null, null);
+  for (const k in map){
+    const r = map[k];
+    const placement = buckets.placementByKey[k] || "NO";
+    current.push({ name:r.name, pax:r.pax, status:r.status, timestamp:r.ts, note:r.note, placement });
   }
-  // sort by date/time
-  out.sort((a,b)=> (a.date+a.start).localeCompare(b.date+b.start));
-  return out;
+  // only keep latest items (current state)
+  return { ok:true, rsvps: out, current: current, summary:{ cap:cap, confirmedPax:buckets.totals.yesPax, waitlistPax:buckets.totals.waitPax, waitLimit:WAITLIST_LIMIT } };
 }
 
-function adminCreateSession_(b){
-  const date = String(b.date||"").trim();
-  if(!isSunday_(date)) return { ok:false, error:"date must be Sunday" };
+function computeTotalsWithOverride_(sessionId, nameOverride, statusOverride, paxOverride) {
+  const sh = openSheet_(SHEET_RSVPS);
+  const values = sh.getDataRange().getValues();
+  const map = {};
+  if (values.length >= 2) {
+    const [header, ...rows] = values;
+    const idx = index_(header);
+    for (let i=0;i<rows.length;i++) {
+      const row = rows[i];
+      if (String(row[idx.sessionId]) !== String(sessionId)) continue;
+      const nm = String(row[idx.name]||"").trim().toLowerCase();
+      if (!nm) continue;
+      const ts = (row[idx.timestamp] instanceof Date) ? row[idx.timestamp].toISOString() : String(row[idx.timestamp]||"");
+      const prev = map[nm];
+      if (!prev || String(ts).localeCompare(String(prev.ts)) > 0) {
+        map[nm] = { ts, status:String(row[idx.status]||"").toUpperCase(), pax:Number(String(row[idx.pax]||"1"))||1 };
+      }
+    }
+  }
+  const key = String(nameOverride||"").trim().toLowerCase();
+  if (key) map[key] = { ts:new Date().toISOString(), status:String(statusOverride||"").toUpperCase(), pax:Number(paxOverride||1)||1 };
 
-  const { sessions } = ensureSheets_();
-  const sid = String(b.sessionId||"").trim() || Utilities.getUuid();
-  const title = String(b.title||"YR Badminton");
-  const start = String(b.start||"17:00");
-  const end = String(b.end||"19:00");
-  const venue = String(b.venue||"Goodminton");
-  const cap = Number(b.capacity||20) || 20;
-  const note = String(b.note||"");
-  const isOpen = !!b.isOpen;
-
-  sessions.appendRow([sid,title,date,start,end,venue,cap,note,isOpen ? "TRUE":"FALSE", nowIso_(), nowIso_()]);
-  return { ok:true, sessionId: sid };
+  let yesTotal=0, waitTotal=0;
+  for (const k in map) {
+    const r=map[k];
+    if (r.status==="YES") yesTotal += (Number(r.pax)||1);
+    if (r.status==="WAITLIST") waitTotal += (Number(r.pax)||1);
+  }
+  return { yesTotal, waitTotal };
 }
 
-function adminUpdateSession_(b){
-  const s = b.session || {};
-  const sid = String(s.sessionId||"").trim();
-  if(!sid) return { ok:false, error:"missing sessionId" };
-  if(!isSunday_(s.date)) return { ok:false, error:"date must be Sunday" };
 
-  const { sessions } = ensureSheets_();
-  const data = sessions.getDataRange().getValues();
-  const head = data.shift();
-  const idx = indexMap_(head);
 
-  for(let r=0; r<data.length; r++){
-    if(String(data[r][idx.sessionid]||"").trim() === sid){
-      const createdAt = data[r][idx.createdat] || "";
-      const row = [
-        sid,
-        String(s.title||"YR Badminton"),
-        String(s.date||""),
-        String(s.start||"17:00"),
-        String(s.end||"19:00"),
-        String(s.venue||"Goodminton"),
-        Number(s.capacity||20) || 20,
-        String(s.note||""),
-        s.isOpen ? "TRUE":"FALSE",
-        createdAt,
-        nowIso_()
-      ];
-      sessions.getRange(r+2, 1, 1, row.length).setValues([row]);
+function latestMapWithOverride_(sessionId, nameOverride, statusOverride, paxOverride) {
+  const sh = openSheet_(SHEET_RSVPS);
+  const values = sh.getDataRange().getValues();
+  const map = {};
+  if (values.length >= 2) {
+    const [header, ...rows] = values;
+    const idx = index_(header);
+    for (let i=0;i<rows.length;i++) {
+      const row = rows[i];
+      if (String(row[idx.sessionId]) !== String(sessionId)) continue;
+      const nmRaw = String(row[idx.name]||"").trim();
+      const nm = nmRaw.toLowerCase();
+      if (!nm) continue;
+      const ts = (row[idx.timestamp] instanceof Date) ? row[idx.timestamp].toISOString() : String(row[idx.timestamp]||"");
+      const prev = map[nm];
+      if (!prev || String(ts).localeCompare(String(prev.ts)) > 0) {
+        map[nm] = { key:nm, name:nmRaw, ts, status:String(row[idx.status]||"").toUpperCase(), pax:Number(String(row[idx.pax]||"1"))||1, note:String(row[idx.note]||"") };
+      }
+    }
+  }
+  const key = String(nameOverride||"").trim().toLowerCase();
+  if (key) {
+    map[key] = { key, name:String(nameOverride||"").trim(), ts:new Date().toISOString(), status:String(statusOverride||"").toUpperCase(), pax:Number(paxOverride||1)||1, note:"" };
+  }
+  return map;
+}
+
+function allocateBuckets_(map, cap, waitLimit){
+  const placementByKey = {};
+  const yes = [];
+  const no = [];
+  for (const k in map){
+    const r=map[k];
+    if (r.status==="YES") yes.push(r);
+    if (r.status==="NO") no.push(r);
+  }
+  // sort by last submit time (ascending) => earlier = higher priority
+  yes.sort((a,b)=>String(a.ts).localeCompare(String(b.ts)));
+
+  let used=0, wused=0;
+  const confirmed=[], waitlist=[], overflow=[];
+  for (const r of yes){
+    const pax = Number(r.pax||1)||1;
+    if (cap>0 && used + pax <= cap){
+      used += pax;
+      placementByKey[r.key] = "CONFIRMED";
+      confirmed.push(r);
+    } else if (wused + pax <= waitLimit){
+      wused += pax;
+      placementByKey[r.key] = "WAITLIST";
+      waitlist.push(r);
+    } else {
+      placementByKey[r.key] = "OVERFLOW";
+      overflow.push(r);
+    }
+  }
+  for (const r of no){
+    placementByKey[r.key] = "NO";
+  }
+  return { placementByKey, confirmed, waitlist, overflow, totals:{ yesPax:used, cap:cap, waitPax:wused, waitLimit:waitLimit } };
+}
+
+function computeBuckets_(sessionId, cap, waitLimit){
+  const map = latestMapWithOverride_(sessionId, null, null, null);
+  return allocateBuckets_(map, cap, waitLimit);
+}
+
+function computeBucketsWithOverride_(sessionId, nameOverride, statusOverride, paxOverride, cap, waitLimit){
+  const map = latestMapWithOverride_(sessionId, nameOverride, statusOverride, paxOverride);
+  return allocateBuckets_(map, cap, waitLimit);
+}
+
+
+function addRsvp_(p) {
+  const sessionId = String(p.sessionId||"").trim();
+  const name = String(p.name||"").trim();
+  const statusRaw = String(p.status||"").trim().toUpperCase();
+  const pax = Number(p.pax||1)||1;
+  const note = String(p.note||"").trim();
+
+  if (!sessionId || !name || !statusRaw) return { ok:false, error:"missing fields" };
+  if (statusRaw === "MAYBE") return { ok:false, error:"MAYBE is not an option" };
+  if (["YES","NO"].indexOf(statusRaw) === -1) return { ok:false, error:"invalid status" };
+
+  const session = getSessionById_(sessionId);
+  if (!session) return { ok:false, error:"session not found" };
+  const cap = Number(session.capacity||0)||0;
+
+  // Check capacity +候補名額（只針對 YES）
+  if (statusRaw==="YES") {
+    const check = computeBucketsWithOverride_(sessionId, name, statusRaw, pax, cap, WAITLIST_LIMIT);
+    const key = String(name||"").trim().toLowerCase();
+    const placement = check.placementByKey[key];
+    // OVERFLOW: still record the RSVP; placement will be returned as OVERFLOW
+  }
+
+  const sh = openSheet_(SHEET_RSVPS);
+  appendRowAsText_(sh, [new Date().toISOString(), sessionId, name, statusRaw, String(pax), note]);
+
+  // Return user experience message (confirmed vs候補)
+  if (statusRaw==="YES") {
+    const after = computeBuckets_(sessionId, cap, WAITLIST_LIMIT);
+    const key = String(name||"").trim().toLowerCase();
+    const placement = after.placementByKey[key] || "CONFIRMED";
+    return { ok:true, placement: placement };
+  }
+  return { ok:true, placement: "NO" };
+}
+
+// --- Admin create session / court ---
+function slug_(s) {
+  return String(s||"").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g,"");
+}
+function sessionIdExists_(id) {
+  const sh = openSheet_(SHEET_SESSIONS);
+  const values = sh.getDataRange().getValues();
+  if (values.length < 2) return false;
+  const [header, ...rows] = values;
+  const idx = index_(header);
+  for (let i=0;i<rows.length;i++) if (String(rows[i][idx.sessionId])===String(id)) return true;
+  return false;
+}
+function generateUniqueSessionId_(date, start, venue) {
+  const base = `${date}-${String(start).replace(":","")}-${slug_(venue).slice(0,20)}`;
+  let id = base, n=2;
+  while (sessionIdExists_(id)) { id = `${base}-${n}`; n++; }
+  return id;
+}
+function setAllOpen_(open) {
+  const sh = openSheet_(SHEET_SESSIONS);
+  const values = sh.getDataRange().getValues();
+  if (values.length < 2) return;
+  const [header, ...rows] = values;
+  const idx = index_(header);
+  for (let r=0;r<rows.length;r++) sh.getRange(r+2, idx.isOpen+1).setValue(open ? "TRUE":"FALSE");
+}
+
+function adminCreateSession_(p) {
+  if (!isAdmin_(p.adminKey)) return { ok:false, error:"unauthorized" };
+  const s = p.session || {};
+  const title = String(s.title||"YR Badminton").trim() || "YR Badminton";
+  const date = String(s.date||"").trim();
+  const start = String(s.start||"17:00").trim() || "17:00";
+  const end = String(s.end||"19:00").trim() || "19:00";
+  const venue = String(s.venue||"").trim();
+  const capacity = Number(s.capacity||20)||20;
+  const note = String(s.note||"").trim();
+  const isOpen = (s.isOpen===true) || asBool_(s.isOpen);
+
+  if (!date) return { ok:false, error:"missing date" };
+  if (!venue) return { ok:false, error:"missing venue" };
+
+  if (p.openOnly) setAllOpen_(false);
+
+  const sh = openSheet_(SHEET_SESSIONS);
+  const sessionId = generateUniqueSessionId_(date, start, venue);
+  appendRowAsText_(sh, [sessionId, title, date, start, end, venue, String(capacity), note, isOpen ? "TRUE":"FALSE"]);
+  return { ok:true, sessionId };
+}
+
+function adminUpdateSession_(p) {
+  if (!isAdmin_(p.adminKey)) return { ok:false, error:"unauthorized" };
+  const s = p.session || {};
+  const targetId = String(s.sessionId||"").trim();
+  if (!targetId) return { ok:false, error:"missing sessionId" };
+
+  const sh = openSheet_(SHEET_SESSIONS);
+  const values = sh.getDataRange().getValues();
+  const [header, ...rows] = values;
+  const idx = index_(header);
+
+  for (let i=0;i<rows.length;i++) {
+    if (String(rows[i][idx.sessionId])===targetId) {
+      const rowNumber=i+2;
+      sh.getRange(rowNumber, idx.date+1).setNumberFormat("@").setValue(String(s.date||""));
+      sh.getRange(rowNumber, idx.start+1).setNumberFormat("@").setValue(String(s.start||""));
+      sh.getRange(rowNumber, idx.end+1).setNumberFormat("@").setValue(String(s.end||""));
+      sh.getRange(rowNumber, idx.venue+1).setValue(String(s.venue||""));
+      sh.getRange(rowNumber, idx.capacity+1).setNumberFormat("@").setValue(String(Number(s.capacity||20)||20));
+      sh.getRange(rowNumber, idx.note+1).setValue(String(s.note||""));
+      sh.getRange(rowNumber, idx.isOpen+1).setValue(s.isOpen ? "TRUE":"FALSE");
       return { ok:true };
     }
   }
   return { ok:false, error:"session not found" };
 }
 
-function adminDeleteSession_(sid){
-  if(!sid) return { ok:false, error:"missing sessionId" };
-  const { sessions, rsvps } = ensureSheets_();
-
-  // delete session rows
-  const sData = sessions.getDataRange().getValues();
-  const sHead = sData.shift();
-  const sIdx = indexMap_(sHead);
-  for(let r=sData.length-1; r>=0; r--){
-    if(String(sData[r][sIdx.sessionid]||"").trim() === sid){
-      sessions.deleteRow(r+2);
-    }
-  }
-
-  // cascade delete RSVPs
-  const rData = rsvps.getDataRange().getValues();
-  const rHead = rData.shift();
-  const rIdx = indexMap_(rHead);
-  for(let r=rData.length-1; r>=0; r--){
-    if(String(rData[r][rIdx.sessionid]||"").trim() === sid){
-      rsvps.deleteRow(r+2);
-    }
+function adminSetOnlyOpen_(p) {
+  if (!isAdmin_(p.adminKey)) return { ok:false, error:"unauthorized" };
+  const targetId = String(p.sessionId||"").trim();
+  if (!targetId) return { ok:false, error:"missing sessionId" };
+  const sh = openSheet_(SHEET_SESSIONS);
+  const values = sh.getDataRange().getValues();
+  const [header, ...rows] = values;
+  const idx = index_(header);
+  for (let i=0;i<rows.length;i++) {
+    const isTarget = String(rows[i][idx.sessionId])===targetId;
+    sh.getRange(i+2, idx.isOpen+1).setValue(isTarget ? "TRUE":"FALSE");
   }
   return { ok:true };
 }
 
-// ====== RSVP LIST / DEDUPE ======
-function listRsvpsPublic_(sid){
-  if(!sid) return { ok:true, current:[], summary:{} };
-  const { rsvps } = ensureSheets_();
-  const rows = getRsvpsBySession_(rsvps, sid);
-  const current = dedupeLatestByName_(rows);
+function adminListRsvps_(p) {
+  if (!isAdmin_(p.adminKey)) return { ok:false, error:"unauthorized" };
+  const sessionId = String(p.sessionId||"").trim();
+  if (!sessionId) return { ok:false, error:"missing sessionId" };
 
-  // compute summary (confirmed/waitlist/overflow) for display
-  const sess = findSession_(sid);
-  const cap = Number(sess && sess.capacity || 0) || 0;
-  const buckets = allocate_(current, cap, WAITLIST_LIMIT);
+  const session = getSessionById_(sessionId);
+  const cap = session ? (Number(session.capacity||0)||0) : 0;
 
-  return {
-    ok:true,
-    session: sess || null,
-    current: current,
-    summary: {
-      capacity: cap,
-      confirmedPax: buckets.confirmedPax,
-      waitlistPax: buckets.waitlistPax,
-      overflowPax: buckets.overflowPax,
-      waitlistLimit: WAITLIST_LIMIT
-    },
-    buckets: buckets
-  };
-}
+  const sh=openSheet_(SHEET_RSVPS);
+  const values=sh.getDataRange().getValues();
+  if(values.length<2) return { ok:true, rsvps: [], current: [], summary:{ cap:cap, confirmedPax:0, waitlistPax:0 } };
+  const [header, ...rows]=values;
+  const idx=index_(header);
 
-function adminListRsvps_(b){
-  const sid = String(b.sessionId||"").trim();
-  if(!sid) return { ok:true, current:[], summary:{} };
-  const { rsvps } = ensureSheets_();
-  const rows = getRsvpsBySession_(rsvps, sid);
-  const current = dedupeLatestByName_(rows);
-  const sess = findSession_(sid);
-  const cap = Number(sess && sess.capacity || 0) || 0;
-  const buckets = allocate_(current, cap, WAITLIST_LIMIT);
-
-  return {
-    ok:true,
-    session: sess || null,
-    current: current,
-    summary: {
-      capacity: cap,
-      confirmedPax: buckets.confirmedPax,
-      waitlistPax: buckets.waitlistPax,
-      overflowPax: buckets.overflowPax,
-      waitlistLimit: WAITLIST_LIMIT
-    },
-    buckets
-  };
-}
-
-function getRsvpsBySession_(rsvpsSheet, sid){
-  const data = rsvpsSheet.getDataRange().getValues();
-  const head = data.shift();
-  const idx = indexMap_(head);
-  const out = [];
-  for(const r of data){
-    if(String(r[idx.sessionid]||"").trim() !== sid) continue;
+  const out=[];
+  for(let i=0;i<rows.length;i++){
+    const row=rows[i];
+    if(String(row[idx.sessionId])!==sessionId) continue;
     out.push({
-      rowId: String(r[idx.rowid]||"").trim(),
-      sessionId: String(r[idx.sessionid]||"").trim(),
-      name: String(r[idx.name]||"").trim(),
-      status: String(r[idx.status]||"").trim(),
-      pax: Number(r[idx.pax]||1) || 1,
-      note: String(r[idx.note]||""),
-      timestamp: String(r[idx.timestamp]||"")
+      rowNumber:i+2,
+      timestamp:(row[idx.timestamp] instanceof Date) ? row[idx.timestamp].toISOString() : String(row[idx.timestamp]||""),
+      sessionId:String(row[idx.sessionId]||""),
+      name:String(row[idx.name]||""),
+      status:String(row[idx.status]||"").toUpperCase(),
+      pax:Number(String(row[idx.pax]||"1"))||1,
+      note:String(row[idx.note]||""),
     });
   }
-  return out;
+
+  const buckets = computeBuckets_(sessionId, cap, WAITLIST_LIMIT);
+  const current=[];
+  const map=latestMapWithOverride_(sessionId, null, null, null);
+  for (const k in map){
+    const r=map[k];
+    const placement=buckets.placementByKey[k] || "NO";
+    current.push({ name:r.name, pax:r.pax, status:r.status, timestamp:r.ts, note:r.note, placement });
+  }
+
+  return { ok:true, rsvps: out, current: current, summary:{ cap:cap, confirmedPax:buckets.totals.yesPax, waitlistPax:buckets.totals.waitPax, waitLimit:WAITLIST_LIMIT } };
 }
 
-function dedupeLatestByName_(rows){
-  // keep latest record per name (case-insensitive), based on timestamp
-  const map = {};
-  for(const r of rows){
-    const key = norm_(r.name);
-    const ts = parseTs_(r.timestamp);
-    const prev = map[key];
-    if(!prev || ts >= parseTs_(prev.timestamp)){
-      map[key] = r;
+
+function adminDeleteSession_(p) {
+  if (!isAdmin_(p.adminKey)) return { ok:false, error:"unauthorized" };
+  const sessionId = String(p.sessionId||"").trim();
+  if (!sessionId) return { ok:false, error:"missing sessionId" };
+
+  // delete session row
+  const shS = openSheet_(SHEET_SESSIONS);
+  const values = shS.getDataRange().getValues();
+  if (values.length < 2) return { ok:false, error:"no sessions" };
+  const [header, ...rows] = values;
+  const idx = index_(header);
+
+  let deleted = false;
+  for (let i=rows.length-1; i>=0; i--) {
+    if (String(rows[i][idx.sessionId]) === sessionId) {
+      shS.deleteRow(i+2);
+      deleted = true;
+      break;
     }
   }
-  return Object.values(map).sort((a,b)=>parseTs_(a.timestamp)-parseTs_(b.timestamp));
-}
+  if (!deleted) return { ok:false, error:"session not found" };
 
-function allocate_(currentRows, capacity, waitLimit){
-  const yes = currentRows.filter(r=>String(r.status||"").toUpperCase()==="YES");
-  // order by timestamp ascending (earlier gets in)
-  yes.sort((a,b)=>parseTs_(a.timestamp)-parseTs_(b.timestamp));
-
-  const confirmed = [];
-  const waitlist = [];
-  const overflow = [];
-  let used = 0;
-  let waitUsed = 0;
-
-  for(const r of yes){
-    const p = Number(r.pax||1) || 1;
-    if(used + p <= capacity){
-      confirmed.push(r);
-      used += p;
-    } else if(waitUsed + p <= waitLimit){
-      waitlist.push(r);
-      waitUsed += p;
-    } else {
-      overflow.push(r);
-    }
-  }
-
-  return {
-    confirmed, waitlist, overflow,
-    confirmedPax: used,
-    waitlistPax: waitUsed,
-    overflowPax: overflow.reduce((s,r)=>s+(Number(r.pax||1)||1),0)
-  };
-}
-
-// ====== RSVP WRITE (RETURN PLACEMENT) ======
-function upsertRsvpWithPlacement_(b){
-  const sid = String(b.sessionId||"").trim();
-  const name = String(b.name||"").trim();
-  const status = String(b.status||"").trim().toUpperCase();
-  const pax = Number(b.pax||1) || 1;
-  const note = String(b.note||"");
-
-  if(!sid) return { ok:false, error:"missing sessionId" };
-  if(!name) return { ok:false, error:"missing name" };
-  if(status === "MAYBE") return { ok:false, error:"maybe not allowed" };
-
-  // ensure session exists and open
-  const sess = findSession_(sid);
-  if(!sess) return { ok:false, error:"session not found" };
-  if(!sess.isOpen) return { ok:false, error:"session closed" };
-
-  const { rsvps } = ensureSheets_();
-  const data = rsvps.getDataRange().getValues();
-  const head = data.shift();
-  const idx = indexMap_(head);
-
-  // find existing row by (sessionId + name case-insensitive)
-  let targetRow = -1;
-  for(let r=0; r<data.length; r++){
-    if(String(data[r][idx.sessionid]||"").trim() === sid &&
-       norm_(data[r][idx.name]) === norm_(name)){
-      targetRow = r + 2;
-    }
-  }
-
-  const ts = nowIso_();
-  const rowId = targetRow>0 ? String(rsvps.getRange(targetRow, idx.rowid+1).getValue() || "").trim() : Utilities.getUuid();
-  const row = [rowId, sid, name, status, String(pax), note, ts];
-
-  if(targetRow>0){
-    rsvps.getRange(targetRow, 1, 1, row.length).setValues([row]);
-  } else {
-    rsvps.appendRow(row);
-  }
-
-  // compute placement based on CURRENT state after write (dedupe latest)
-  const allRows = getRsvpsBySession_(rsvps, sid);
-  const current = dedupeLatestByName_(allRows);
-  const cap = Number(sess.capacity||0) || 0;
-  const buckets = allocate_(current, cap, WAITLIST_LIMIT);
-
-  // determine placement for THIS name
-  const who = norm_(name);
-  if(status === "NO"){
-    return {
-      ok:true,
-      placement:"NO",
-      summary:{ capacity:cap, confirmedPax:buckets.confirmedPax, waitlistPax:buckets.waitlistPax, waitlistLimit:WAITLIST_LIMIT }
-    };
-  }
-
-  const inConfirmed = buckets.confirmed.some(r=>norm_(r.name)===who);
-  const inWait = buckets.waitlist.some(r=>norm_(r.name)===who);
-
-  if(inConfirmed){
-    return {
-      ok:true,
-      placement:"CONFIRMED",
-      summary:{ capacity:cap, confirmedPax:buckets.confirmedPax, waitlistPax:buckets.waitlistPax, waitlistLimit:WAITLIST_LIMIT }
-    };
-  }
-  if(inWait){
-    return {
-      ok:true,
-      placement:"WAITLIST",
-      summary:{ capacity:cap, confirmedPax:buckets.confirmedPax, waitlistPax:buckets.waitlistPax, waitlistLimit:WAITLIST_LIMIT }
-    };
-  }
-
-  // overflow waitlist
-  return {
-    ok:true,
-    placement:"OVERFLOW",
-    summary:{ capacity:cap, confirmedPax:buckets.confirmedPax, waitlistPax:buckets.waitlistPax, waitlistLimit:WAITLIST_LIMIT },
-    error:"waitlist full"
-  };
-}
-
-function adminUpdateRsvp_(b){
-  const rowId = String(b.rowId||"").trim();
-  if(!rowId) return { ok:false, error:"missing rowId" };
-
-  const { rsvps } = ensureSheets_();
-  const data = rsvps.getDataRange().getValues();
-  const head = data.shift();
-  const idx = indexMap_(head);
-
-  for(let r=0; r<data.length; r++){
-    if(String(data[r][idx.rowid]||"").trim() === rowId){
-      const sid = String(b.sessionId||data[r][idx.sessionid]||"").trim();
-      const name = String(b.name||data[r][idx.name]||"").trim();
-      const status = String(b.status||data[r][idx.status]||"").trim().toUpperCase();
-      const pax = Number(b.pax||data[r][idx.pax]||1) || 1;
-      const note = String(b.note||data[r][idx.note]||"");
-      rsvps.getRange(r+2, 1, 1, 7).setValues([[rowId, sid, name, status, String(pax), note, nowIso_()]]);
-      return { ok:true };
-    }
-  }
-  return { ok:false, error:"row not found" };
-}
-
-function adminDeleteRsvp_(b){
-  const rowId = String(b.rowId||"").trim();
-  if(!rowId) return { ok:false, error:"missing rowId" };
-
-  const { rsvps } = ensureSheets_();
-  const data = rsvps.getDataRange().getValues();
-  const head = data.shift();
-  const idx = indexMap_(head);
-
-  for(let r=data.length-1; r>=0; r--){
-    if(String(data[r][idx.rowid]||"").trim() === rowId){
-      rsvps.deleteRow(r+2);
-      return { ok:true };
+  // delete ALL rsvps for that session
+  const shR = openSheet_(SHEET_RSVPS);
+  const rValues = shR.getDataRange().getValues();
+  if (rValues.length >= 2) {
+    const [rHeader, ...rRows] = rValues;
+    const rIdx = index_(rHeader);
+    for (let i=rRows.length-1; i>=0; i--) {
+      if (String(rRows[i][rIdx.sessionId]) === sessionId) {
+        shR.deleteRow(i+2);
+      }
     }
   }
   return { ok:true };
 }
 
-// ====== SESSION LOOKUP ======
-function findSession_(sid){
-  const sessions = listSessions_(false);
-  for(const s of sessions){
-    if(String(s.sessionId||"").trim() === sid) return s;
+
+/**
+ * Cleanup old sessions and related RSVPs.
+ * Deletes sessions whose date is older than N days (default 14) and removes all RSVPs for them.
+ * You can run this manually in Apps Script or attach it to a time-driven trigger (daily).
+ */
+function cleanupOldSessions_(days) {
+  const KEEP_DAYS = (days === undefined || days === null) ? 14 : Number(days);
+  const tz = Session.getScriptTimeZone();
+  const today = new Date();
+  const cutoff = new Date(today.getTime() - KEEP_DAYS*24*60*60*1000);
+
+  const shS = openSheet_(SHEET_SESSIONS);
+  const sValues = shS.getDataRange().getValues();
+  if (sValues.length < 2) return { removedSessions:0, removedRsvps:0 };
+  const [sHeader, ...sRows] = sValues;
+  const sIdx = index_(sHeader);
+
+  // Collect sessions to remove
+  const toRemove = [];
+  for (let i=0;i<sRows.length;i++){
+    const sid = String(sRows[i][sIdx.sessionId]||"").trim();
+    if(!sid) continue;
+    const dCell = sRows[i][sIdx.date];
+    let dStr = fmtDateCell_(dCell);
+    // parse yyyy-MM-dd
+    const m = String(dStr).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if(!m) continue;
+    const d = new Date(Number(m[1]), Number(m[2])-1, Number(m[3]), 0,0,0,0);
+    if (d.getTime() < cutoff.getTime()) {
+      toRemove.push({ sid, rowNumber:i+2 });
+    }
   }
-  return null;
+
+  // Remove sessions from bottom to top (row numbers shift)
+  toRemove.sort((a,b)=>b.rowNumber-a.rowNumber);
+  for (const x of toRemove) shS.deleteRow(x.rowNumber);
+
+  // Remove RSVPs for removed sessions
+  let removedRsvps=0;
+  if (toRemove.length){
+    const removedSet = {};
+    toRemove.forEach(x=>removedSet[x.sid]=true);
+    const shR=openSheet_(SHEET_RSVPS);
+    const rValues=shR.getDataRange().getValues();
+    if(rValues.length>=2){
+      const [rHeader, ...rRows]=rValues;
+      const rIdx=index_(rHeader);
+      for(let i=rRows.length-1;i>=0;i--){
+        const sid=String(rRows[i][rIdx.sessionId]||"").trim();
+        if(removedSet[sid]){
+          shR.deleteRow(i+2);
+          removedRsvps++;
+        }
+      }
+    }
+  }
+  return { removedSessions: toRemove.length, removedRsvps };
 }
 
-function fmtDateCell_(v){
-  if(v instanceof Date){
-    return Utilities.formatDate(v, Session.getScriptTimeZone() || "Australia/Brisbane", "yyyy-MM-dd");
-  }
-  const s = String(v||"").trim();
-  if(!s) return "";
-  // if already yyyy-mm-dd
-  if(/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-  const t = Date.parse(s);
-  if(!isNaN(t)){
-    return Utilities.formatDate(new Date(t), Session.getScriptTimeZone() || "Australia/Brisbane", "yyyy-MM-dd");
-  }
-  return s;
+/**
+ * Entry point for Apps Script trigger (daily).
+ * Set up a time-driven trigger to run this function automatically.
+ */
+function dailyCleanup() {
+  // Auto-close past sessions (keep history)
+  closePastSessions_();
+  // Optional: if you still want to DELETE very old sessions, run cleanupOldSessions_(14) manually.
 }
 
-// ====== HEADER MAP (case-insensitive, trimmed) ======
-function indexMap_(headers){
-  const m = {};
-  for(let i=0;i<headers.length;i++){
-    const key = String(headers[i]||"").trim().toLowerCase();
-    if(key) m[key]=i;
+
+/**
+ * Auto-close past sessions (set isOpen=FALSE) while keeping history.
+ * Rule: if session date < today (local script timezone), set isOpen FALSE.
+ */
+function closePastSessions_() {
+  const tz = Session.getScriptTimeZone();
+  const today = new Date();
+  const y=today.getFullYear(), m=today.getMonth()+1, d=today.getDate();
+  const todayLocal = new Date(y, m-1, d, 0,0,0,0);
+
+  const sh = openSheet_(SHEET_SESSIONS);
+  const values = sh.getDataRange().getValues();
+  if (values.length < 2) return { closed:0 };
+  const [header, ...rows] = values;
+  const idx = index_(header);
+
+  let closed=0;
+  for (let i=0;i<rows.length;i++){
+    const row=rows[i];
+    const dateStr = String(row[idx.date] instanceof Date ? fmtDateCell_(row[idx.date]) : row[idx.date]).trim();
+    const m2 = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if(!m2) continue;
+    const dd = new Date(Number(m2[1]), Number(m2[2])-1, Number(m2[3]), 0,0,0,0);
+    if(dd.getTime() < todayLocal.getTime()){
+      // set isOpen to FALSE if currently TRUE
+      const isOpenCell = row[idx.isOpen];
+      const isOpen = asBool_(isOpenCell);
+      if(isOpen){
+        sh.getRange(i+2, idx.isOpen+1).setValue("FALSE");
+        closed++;
+      }
+    }
   }
-  return {
-    sessionid: m["sessionid"],
-    title: m["title"],
-    date: m["date"],
-    start: m["start"],
-    end: m["end"],
-    venue: m["venue"],
-    capacity: m["capacity"],
-    note: m["note"],
-    isopen: m["isopen"],
-    createdat: m["createdat"],
-    updatedat: m["updatedat"],
-    rowid: m["rowid"],
-    name: m["name"],
-    status: m["status"],
-    pax: m["pax"],
-    timestamp: m["timestamp"]
-  };
+  return { closed };
 }
+
