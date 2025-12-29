@@ -1,567 +1,516 @@
-// assets/admin.js
-// YR Badminton Admin
-// Fixes:
-// - Bookings must always show CURRENT (dedupe latest by name).
-// - Date inputs: lock to Sunday only (front-end), backend also validates.
-// - Keep existing admin functions (create, generate, list, announce) without duplicates.
+function on_(id, evt, fn){
+  const x = document.getElementById(id);
+  if(x) x.addEventListener(evt, fn);
+  return x;
+}
+function safeCall_(fn, ...args){
+  if(typeof fn === "function") return fn(...args);
+}
 
-const API_BASE = "https://script.google.com/macros/s/AKfycbwLCg1vLgzeXwheEBWKzCl4YnLlQTmRYZyU8G-FSLJl5MZK4s2uJHDQLnYdwegOvZ5T/exec";
+// assets/admin.js
+const API_BASE = "https://script.google.com/macros/s/AKfycbwv5Db3ePyGuiTDOGFDM8joTprsOmL3xpymGPVOv3ocaPeTb-QTEPySqafNxY_LhJwm/exec";
 const WAITLIST_LIMIT = 6;
 
-const $ = (id) => document.getElementById(id);
+const el=(id)=>document.getElementById(id);
+let sessions=[];
 
-let sessions = [];
-let rsvpsCache = []; // raw rows for selected session
-
-function pad2(n) { return String(n).padStart(2, "0"); }
-function toYMD(d) {
-  const y = d.getFullYear();
-  const m = pad2(d.getMonth() + 1);
-  const dd = pad2(d.getDate());
-  return `${y}-${m}-${dd}`;
+async function apiGet(params){
+  const url=`${API_BASE}?${new URLSearchParams(params).toString()}`;
+  const res=await fetch(url);
+  if(!res.ok) throw new Error("GET failed");
+  return res.json();
 }
-function normYMD(v) {
-  const s = String(v || "").trim();
-  if (!s) return "";
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-  const d = new Date(s);
-  if (!isNaN(d.getTime())) return toYMD(d);
+async function apiPost(payload){
+  const res=await fetch(API_BASE,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(payload)});
+  if(!res.ok) throw new Error("POST failed");
+  return res.json();
+}
+function setMsg(id,t){ el(id).textContent=t||""; }
+function key(){ return el("adminKey").value.trim(); }
+function ensureKey(){ const k=key(); if(!k) throw new Error("請輸入 Admin Key"); return k; }
+
+function normalizeDateYYYYMMDD(v){
+  const s=String(v||"").trim();
+  if(!s) return "";
+  if(/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const d=new Date(s);
+  if(!isNaN(d.getTime())){
+    const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,"0"), dd=String(d.getDate()).padStart(2,"0");
+    return `${y}-${m}-${dd}`;
+  }
   return s;
 }
-function normHM(v) {
-  const s = String(v || "").trim();
-  if (!s) return "";
-  const m = s.match(/^(\d{1,2}):(\d{2})$/);
-  if (m) return `${pad2(m[1])}:${m[2]}`;
-  const d = new Date(s);
-  if (!isNaN(d.getTime())) return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-  const m2 = s.match(/(\d{1,2}):(\d{2})/);
-  if (m2) return `${pad2(m2[1])}:${m2[2]}`;
+function normalizeTimeHHMM(v){
+  const s=String(v||"").trim();
+  if(!s) return "";
+  const m1=s.match(/^(\d{1,2}):(\d{2})$/);
+  if(m1) return `${m1[1].padStart(2,"0")}:${m1[2]}`;
+  const d=new Date(s);
+  if(!isNaN(d.getTime())) return `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+  const m2=s.match(/(\d{1,2}):(\d{2})/);
+  if(m2) return `${m2[1].padStart(2,"0")}:${m2[2]}`;
   return s;
 }
+function esc(s=""){ return String(s).replace(/[&<>"']/g,(c)=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c])); }
 
-function esc(s="") {
-  return String(s).replace(/[&<>"']/g,(c)=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c]));
+function fillSessionSelects(){
+  const rsvpSel=el("rsvpSession");
+  rsvpSel.innerHTML="";
+  sessions.slice().sort((a,b)=>normalizeDateYYYYMMDD(a.date).localeCompare(normalizeDateYYYYMMDD(b.date)))
+    .forEach(s=>{
+      const opt=document.createElement("option");
+      opt.value=s.sessionId;
+      opt.textContent=`${normalizeDateYYYYMMDD(s.date)} ${normalizeTimeHHMM(s.start)} · ${s.venue}${s.isOpen?" · OPEN":""}`;
+      rsvpSel.appendChild(opt);
+    });
 }
 
-async function apiGet(params) {
-  const url = `${API_BASE}?${new URLSearchParams(params).toString()}`;
-  const res = await fetch(url);
-  const data = await res.json().catch(() => ({ ok:false, error:"Invalid JSON" }));
-  if (!res.ok) throw new Error(data.error || "GET failed");
-  return data;
-}
-
-async function apiPost(payload) {
-  const res = await fetch(API_BASE, {
-    method:"POST",
-    headers:{"Content-Type":"text/plain;charset=utf-8"},
-    body: JSON.stringify(payload)
-  });
-  const data = await res.json().catch(() => ({ ok:false, error:"Invalid JSON" }));
-  if (!res.ok) throw new Error(data.error || "POST failed");
-  return data;
-}
-
-function setMsg(id, t) {
-  const el = $(id);
-  if (el) el.textContent = t || "";
-}
-
-function ensureKey() {
-  const k = String($("adminKey")?.value || "").trim();
-  if (!k) throw new Error("請輸入 Admin Key");
-  return k;
-}
-
-function nextSundayFrom(dateStr) {
-  const d = new Date(dateStr + "T00:00:00");
-  if (isNaN(d.getTime())) return "";
-  const day = d.getDay(); // Sunday=0
-  const delta = (7 - day) % 7; // 0 if already Sunday
-  d.setDate(d.getDate() + delta);
-  return toYMD(d);
-}
-
-function lockSundayOnly(inputId, msgId) {
-  const el = $(inputId);
-  if (!el) return;
-  const raw = normYMD(el.value);
-  if (!raw) return;
-  const fixed = nextSundayFrom(raw);
-  if (fixed && fixed !== raw) {
-    el.value = fixed;
-    if (msgId) setMsg(msgId, "已自動改為星期日（只可 Sunday）。");
-  } else {
-    if (msgId) setMsg(msgId, "");
+function fillAnnounceSelects_(){
+  const a=document.getElementById("announceSession");
+  if(!a) return;
+  a.innerHTML="";
+  const list = sessions.slice().sort((x,y)=>normalizeDateYYYYMMDD(x.date).localeCompare(normalizeDateYYYYMMDD(y.date)) || normalizeTimeHHMM(x.start).localeCompare(normalizeTimeHHMM(y.start)));
+  for(const s of list){
+    const opt=document.createElement("option");
+    opt.value=s.sessionId;
+    opt.textContent=`${normalizeDateYYYYMMDD(s.date)} ${normalizeTimeHHMM(s.start)} · ${s.venue}${s.isOpen?" · OPEN":""}`;
+    a.appendChild(opt);
   }
+  const pick = pickClosestOpenSessionIdAdmin_();
+  if(pick) a.value = pick;
 }
 
-function sessionLabel(s, withOpen=true) {
-  const date = normYMD(s.date);
-  const start = normHM(s.start);
-  const end = normHM(s.end);
-  return `${date} ${start}-${end} · ${s.venue}${withOpen ? (s.isOpen ? " · OPEN" : " · CLOSED") : ""}`;
-}
-
-function dedupeLatestByName(rows) {
-  const sorted = (rows||[]).slice().sort((a,b)=>String(a.timestamp||"").localeCompare(String(b.timestamp||"")));
-  const by = new Map();
-  for (const r of sorted) {
-    const k = String(r.name||"").trim().toLowerCase();
-    if (!k) continue;
-    by.set(k, r);
-  }
-  return Array.from(by.values());
-}
-
-function allocateCurrent(uniqRows, cap, waitLimit) {
-  const yes = uniqRows
-    .filter(r=>String(r.status||"").toUpperCase()==="YES")
-    .slice()
-    .sort((a,b)=>String(a.timestamp||"").localeCompare(String(b.timestamp||"")));
-  const no = uniqRows.filter(r=>String(r.status||"").toUpperCase()==="NO");
-
-  let used=0, wused=0;
-  const confirmed=[], waitlist=[], overflow=[];
-  for(const r of yes) {
-    const pax = Math.max(1, Number(r.pax||1)||1);
-    if (cap>0 && used+pax<=cap) { used+=pax; confirmed.push(r); }
-    else if (wused+pax<=waitLimit) { wused+=pax; waitlist.push(r); }
-    else overflow.push(r);
-  }
-  return {confirmed, waitlist, overflow, no, totals:{confirmedPax:used, waitlistPax:wused}};
-}
-
-function buildRsvpTable(currentRows, sess) {
-  const cap = Number(sess.capacity||0)||0;
-  const uniq = dedupeLatestByName(currentRows);
-  const buckets = allocateCurrent(uniq, cap, WAITLIST_LIMIT);
-
-  const filter = String($("rsvpFilter")?.value || "ALL").toUpperCase();
-
-  const view = [];
-  for (const r of buckets.confirmed) view.push({...r, _bucket:"CONFIRMED"});
-  for (const r of buckets.waitlist) view.push({...r, _bucket:"WAITLIST"});
-  for (const r of buckets.no) view.push({...r, _bucket:"NO"});
-  for (const r of buckets.overflow) view.push({...r, _bucket:"OVERFLOW"});
-
-  const filtered = view.filter(row => {
-    if (filter==="ALL") return true;
-    if (filter==="YES" || filter==="CONFIRMED") return row._bucket==="CONFIRMED";
-    if (filter==="WAITLIST") return row._bucket==="WAITLIST";
-    if (filter==="NO") return row._bucket==="NO";
-    return true;
-  });
-
-  const sumLine = `出席/Confirmed：${buckets.totals.confirmedPax}/${cap||"-"} ｜ 候補/Waitlist：${buckets.totals.waitlistPax}/${WAITLIST_LIMIT}`;
-  const head = `
-    <div class="muted small" style="margin-bottom:8px;">${esc(sumLine)}（只顯示 current / latest per name）</div>
-    <div style="overflow:auto;">
-      <table class="table">
-        <thead><tr>
-          <th>Name</th><th>Status</th><th>Bucket</th><th>Pax</th><th>Note</th><th>Timestamp</th>
-        </tr></thead>
-        <tbody>
+function renderSessionsTable(){
+  const showClosed=el("showClosed").checked;
+  const view=sessions.filter(s=>showClosed?true:!!s.isOpen);
+  if(!view.length){ el("sessionsTable").innerHTML=`<div class="muted">暫時無場次</div>`; return; }
+  el("sessionsTable").innerHTML=`
+    <div class="table">
+      <div class="tr th small">
+        <div>ID</div><div>Date</div><div>Time</div><div>Venue</div><div>Cap</div><div>Open</div><div>Note</div><div>Actions</div>
+      </div>
+      ${view.map(s=>`
+        <div class="tr small" data-sid="${esc(s.sessionId)}">
+          <div class="cell"><span class="badge">${esc(s.sessionId)}</span></div>
+          <div class="cell"><input data-f="date" value="${esc(normalizeDateYYYYMMDD(s.date))}"></div>
+          <div class="cell"><div class="row" style="gap:6px;">
+            <input data-f="start" value="${esc(normalizeTimeHHMM(s.start))}">
+            <input data-f="end" value="${esc(normalizeTimeHHMM(s.end))}">
+          </div></div>
+          <div class="cell"><input data-f="venue" value="${esc(s.venue||"")}"></div>
+          <div class="cell"><input data-f="capacity" type="number" min="1" value="${Number(s.capacity||20)||20}"></div>
+          <div class="cell"><select data-f="isOpen">
+            <option value="TRUE" ${s.isOpen?"selected":""}>TRUE</option>
+            <option value="FALSE" ${!s.isOpen?"selected":""}>FALSE</option>
+          </select></div>
+          <div class="cell"><input data-f="note" value="${esc(s.note||"")}"></div>
+          <div class="cell"><div class="actions">
+            <button data-act="save">儲存</button>
+            <button class="alt" data-act="openOnly">唯一開放</button>
+            <button class="danger" data-act="delete">刪除</button>
+          </div></div>
+        </div>
+      `).join("")}
+    </div>
   `;
-  const body = filtered.length ? filtered.map(r=>`
-      <tr>
-        <td>${esc(r.name||"")}</td>
-        <td>${esc(String(r.status||"").toUpperCase())}</td>
-        <td>${esc(r._bucket)}</td>
-        <td>${esc(r.pax||"")}</td>
-        <td>${esc(r.note||"")}</td>
-        <td class="muted small">${esc(r.timestamp||"")}</td>
-      </tr>
-  `).join("") : `<tr><td colspan="6" class="muted">暫時無預約</td></tr>`;
-
-  const tail = `</tbody></table></div>`;
-  return head + body + tail;
+  document.querySelectorAll("[data-sid]").forEach(rowEl=>{
+    rowEl.querySelectorAll("button[data-act]").forEach(btn=>{
+      btn.addEventListener("click", async ()=>{
+        const act=btn.getAttribute("data-act");
+        const adminKey=ensureKey();
+        const sid=rowEl.getAttribute("data-sid");
+        const get=(f)=>rowEl.querySelector(`[data-f="${f}"]`).value;
+        try{
+          btn.disabled=true;
+          if(act==="save"){
+            const session={
+              sessionId:sid,
+              date:normalizeDateYYYYMMDD(get("date")),
+              start:normalizeTimeHHMM(get("start")),
+              end:normalizeTimeHHMM(get("end")),
+              venue:get("venue").trim(),
+              capacity:Number(get("capacity")||20)||20,
+              note:get("note").trim(),
+              isOpen:String(get("isOpen")).toUpperCase()==="TRUE"
+            };
+            const res=await apiPost({action:"admin_updateSession", adminKey, session});
+            if(!res.ok) throw new Error(res.error||"update failed");
+            await loadSessions();
+          }
+          if(act==="openOnly"){
+            const res=await apiPost({action:"admin_setOnlyOpen", adminKey, sessionId:sid});
+            if(!res.ok) throw new Error(res.error||"setOnlyOpen failed");
+            await loadSessions();
+          }
+                  if(act==="delete"){
+            if(!confirm("確定刪除？同時會清走該場所有 bookings。")) return;
+            const res=await apiPost({action:"admin_deleteSession", adminKey, sessionId:sid});
+            if(!res.ok) throw new Error(res.error||"delete failed");
+            await loadSessions();
+          }
+        }catch(e){
+          setMsg("topMsg", e.message||String(e));
+        }finally{
+          btn.disabled=false;
+        }
+      });
+    });
+  });
 }
-
-async function loadSessions() {
-  let data;
-  try {
-    data = await apiGet({action:"sessions_all"});
-  } catch {
-    data = await apiGet({action:"sessions"});
-  }
-  sessions = data.sessions || [];
-
-  const ann = $("announceSession");
-  const rsvpSel = $("rsvpSession");
-  if (ann) ann.innerHTML = "";
-  if (rsvpSel) rsvpSel.innerHTML = "";
-
-  const sorted = sessions.slice().sort((a,b)=>normYMD(a.date).localeCompare(normYMD(b.date)) || normHM(a.start).localeCompare(normHM(b.start)));
-  for (const s of sorted) {
-    const opt1 = document.createElement("option");
-    opt1.value = s.sessionId;
-    opt1.textContent = sessionLabel(s, true);
-    ann && ann.appendChild(opt1);
-
-    const opt2 = document.createElement("option");
-    opt2.value = s.sessionId;
-    opt2.textContent = sessionLabel(s, true);
-    rsvpSel && rsvpSel.appendChild(opt2);
-  }
-
+async function loadSessions(){
+  const data=await apiGet({action:"sessions"});
+  sessions=data.sessions||[];
+  fillSessionSelects();
+  fillAnnounceSelects_();
+  updateAnnounceSummary_().catch(()=>{});
   renderSessionsTable();
-  await updateAnnounceSummary();
+}
+async function createSession(){
+  const adminKey=ensureKey();
+  const session={
+    title:(el("newTitle").value||"YR Badminton").trim(),
+    date:normalizeDateYYYYMMDD(el("newDate").value.trim()),
+    start:normalizeTimeHHMM(el("newStart").value.trim()||"17:00"),
+    end:normalizeTimeHHMM(el("newEnd").value.trim()||"19:00"),
+    venue:el("newVenue").value.trim(),
+    capacity:Number(el("newCap").value||20)||20,
+    note:el("newNote").value.trim(),
+    isOpen:el("newIsOpen").checked
+  };
+  const openOnly=el("newOnlyOpen").checked;
+  if(!session.date) throw new Error("請填 Date");
+  if(!session.venue) throw new Error("請填 Venue");
+  const res=await apiPost({action:"admin_createSession", adminKey, session, openOnly});
+  if(!res.ok) throw new Error(res.error||"create failed");
+  setMsg("createMsg", `已建立：${res.sessionId}`);
+  await loadSessions();
 }
 
-function renderSessionsTable() {
-  const box = $("sessionsTable");
-  if (!box) return;
+async function loadRsvps(){
+  const adminKey=ensureKey();
+  const sessionId=el("rsvpSession").value;
+  if(!sessionId){ el("rsvpsTable").innerHTML=`<div class="muted">未有場次</div>`; return; }
+  const data=await apiPost({action:"admin_listRsvps", adminKey, sessionId});
+  if(!data.ok) throw new Error(data.error||"list failed");
 
-  const showClosed = !!$("showClosed")?.checked;
-  const rows = sessions
-    .filter(s => showClosed ? true : !!s.isOpen)
-    .slice()
-    .sort((a,b)=>normYMD(a.date).localeCompare(normYMD(b.date)) || normHM(a.start).localeCompare(normHM(b.start)));
+  const current=(data.current||[]).slice();
+  const filter=el("rsvpFilter").value;
 
-  if (!rows.length) {
-    box.innerHTML = `<div class="muted">暫時無場次</div>`;
-    return;
-  }
+  const view=current.filter(r=>{
+    const placement=String(r.placement||"").toUpperCase();
+    if(filter==="ALL") return true;
+    if(filter==="NO") return String(r.status||"").toUpperCase()==="NO";
+    return placement===filter;
+  }).sort((a,b)=>String(a.timestamp||"").localeCompare(String(b.timestamp||""))); // earliest first
 
-  box.innerHTML = `
-  <div style="overflow:auto;">
-    <table class="table">
-      <thead><tr>
-        <th>ID</th><th>Title</th><th>Date</th><th>Start</th><th>End</th><th>Venue</th><th>Cap</th><th>Open</th><th>Note</th><th>Actions</th>
-      </tr></thead>
-      <tbody>
-        ${rows.map(s=>`
-          <tr data-id="${esc(s.sessionId)}">
-            <td class="muted small">${esc(s.sessionId)}</td>
-            <td><input data-f="title" value="${esc(s.title||"")}" /></td>
-            <td><input data-f="date" type="date" value="${esc(normYMD(s.date))}" /></td>
-            <td><input data-f="start" value="${esc(normHM(s.start))}" style="width:90px;" /></td>
-            <td><input data-f="end" value="${esc(normHM(s.end))}" style="width:90px;" /></td>
-            <td><input data-f="venue" value="${esc(s.venue||"")}" /></td>
-            <td><input data-f="capacity" type="number" min="1" value="${esc(s.capacity||20)}" style="width:80px;" /></td>
-            <td>
-              <select data-f="isOpen">
-                <option value="TRUE" ${s.isOpen?"selected":""}>TRUE</option>
-                <option value="FALSE" ${!s.isOpen?"selected":""}>FALSE</option>
-              </select>
-            </td>
-            <td><input data-f="note" value="${esc(s.note||"")}" /></td>
-            <td class="row" style="gap:8px;">
-              <button data-act="save" style="width:auto;">儲存</button>
-              <button data-act="onlyopen" class="alt" style="width:auto;">唯一開放</button>
-              <button data-act="del" class="danger" style="width:auto;">刪除</button>
-            </td>
-          </tr>
-        `).join("")}
-      </tbody>
-    </table>
-  </div>
-  <p class="muted small">提示：日期只可 Sunday；後端亦會拒絕非 Sunday。</p>
-  `;
+  if(!view.length){ el("rsvpsTable").innerHTML=`<div class="muted">暫時無預約</div>`; return; }
 
-  box.querySelectorAll("button[data-act]").forEach(btn=>btn.addEventListener("click", onSessionAction));
-  box.querySelectorAll('input[data-f="date"]').forEach(inp=>inp.addEventListener("change", ()=>{
-    const v = normYMD(inp.value);
-    inp.value = nextSundayFrom(v);
-  }));
-}
-
-async function onSessionAction(e) {
-  const btn = e.target;
-  const tr = btn.closest("tr");
-  if (!tr) return;
-  const id = tr.getAttribute("data-id");
-  const act = btn.getAttribute("data-act");
-  const adminKey = ensureKey();
-
-  if (act === "del") {
-    if (!confirm("確定刪除場次？（會同時刪除該場所有 bookings）")) return;
-    const res = await apiPost({action:"admin_deleteSession", adminKey, sessionId:id});
-    if (!res.ok) throw new Error(res.error||"delete failed");
-    await loadSessions();
-    setMsg("topMsg", "已刪除。");
-    return;
-  }
-
-  const getVal = (f) => tr.querySelector(`[data-f="${f}"]`)?.value;
-
-  const session = {
-    sessionId: id,
-    title: getVal("title"),
-    date: nextSundayFrom(normYMD(getVal("date"))),
-    start: normHM(getVal("start")),
-    end: normHM(getVal("end")),
-    venue: getVal("venue"),
-    capacity: Number(getVal("capacity")||20),
-    note: getVal("note")||"",
-    isOpen: String(getVal("isOpen")||"FALSE").toUpperCase()==="TRUE",
+  const placementZh = (p)=>{
+    p=String(p||"").toUpperCase();
+    if(p==="CONFIRMED") return "成功報名";
+    if(p==="WAITLIST") return "候補";
+    if(p==="NO") return "缺席";
+    return p;
   };
 
-  if (act === "onlyopen") {
-    // close others; open this
-    for (const s of sessions) s.isOpen = (s.sessionId === id);
-    for (const s of sessions) {
-      const r = await apiPost({
-        action:"admin_updateSession",
-        adminKey,
-        session:{
-          sessionId:s.sessionId,
-          title:s.title,
-          date: nextSundayFrom(normYMD(s.date)),
-          start:normHM(s.start),
-          end:normHM(s.end),
-          venue:s.venue,
-          capacity:Number(s.capacity||20),
-          note:s.note||"",
-          isOpen: !!s.isOpen
-        }
-      });
-      if (!r.ok) throw new Error(r.error||"update failed");
-    }
-    await loadSessions();
-    setMsg("topMsg", "已設定唯一開放。");
-    return;
-  }
-
-  if (act === "save") {
-    const res = await apiPost({action:"admin_updateSession", adminKey, session});
-    if (!res.ok) throw new Error(res.error||"save failed");
-    await loadSessions();
-    setMsg("topMsg", "已儲存。");
-  }
+  el("rsvpsTable").innerHTML=`
+    <div class="table">
+      <div class="tr th small" style="grid-template-columns: 190px 1fr 120px 90px 1fr;">
+        <div>Timestamp</div><div>Name</div><div>結果</div><div>Players</div><div>Note</div>
+      </div>
+      ${view.map(r=>`
+        <div class="tr small" style="grid-template-columns: 190px 1fr 120px 90px 1fr;">
+          <div class="cell">${esc(r.timestamp||"")}</div>
+          <div class="cell">${esc(r.name||"")}</div>
+          <div class="cell">${esc(placementZh(r.placement||r.status||""))}</div>
+          <div class="cell">${Number(r.pax||1)||1}</div>
+          <div class="cell">${esc(r.note||"")}</div>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+function toISODate_(d){
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,"0");
+  const dd = String(d.getDate()).padStart(2,"0");
+  return `${y}-${m}-${dd}`;
+}
+function parseISODate_(s){
+  const m=String(s||"").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if(!m) return null;
+  return new Date(Number(m[1]), Number(m[2])-1, Number(m[3]), 0,0,0,0);
+}
+function nextSunday_(fromDate){
+  const d=new Date(fromDate.getTime());
+  const day=d.getDay(); // 0=Sun
+  const add=(7 - day) % 7;
+  d.setDate(d.getDate()+add);
+  return d;
 }
 
-async function createSession() {
-  const adminKey = ensureKey();
 
-  const title = String($("newTitle")?.value || "YR Badminton").trim();
-  const date = nextSundayFrom(normYMD($("newDate")?.value || ""));
-  if ($("newDate")) $("newDate").value = date;
 
-  const start = normHM($("newStart")?.value || "17:00");
-  const end = normHM($("newEnd")?.value || "19:00");
-  const venue = String($("newVenue")?.value || "Goodminton").trim();
-  const capacity = Number($("newCap")?.value || 20);
-  const note = String($("newNote")?.value || "").trim();
-  const isOpen = !!$("newIsOpen")?.checked;
-  const onlyOpen = !!$("newOnlyOpen")?.checked;
+async function generateSundays_(){
+  const adminKey=ensureKey();
 
-  const res = await apiPost({
-    action:"admin_createSession",
-    adminKey,
-    title, date, start, end, venue, capacity, note, isOpen, onlyOpen
-  });
-  if (!res.ok) throw new Error(res.error||"create failed");
+  // genStartDate is auto-forced to Sunday in the date picker handler
+  const startStr=el("genStartDate").value;
+  const start=parseISODate_(startStr);
+  if(!start) throw new Error("請填「從哪一日開始」日期（星期日）");
+  if(start.getDay()!==0) throw new Error("請選擇星期日（系統會自動調整）");
 
-  await loadSessions();
-  setMsg("createMsg","已建立。");
-}
+  const weeks = Number(el("genWeeks").value||8)||8;
+  const venue = (el("genVenue").value||"").trim();
+  if(!venue) throw new Error("請填預設 Venue");
+  const cap = Number(el("genCap").value||20)||20;
+  const openOnly = el("genOpenOnly").checked;
 
-async function generateSundays() {
-  const adminKey = ensureKey();
+  let created=0;
+  for(let i=0;i<weeks;i++){
+    const d=new Date(start.getTime());
+    d.setDate(d.getDate()+i*7);
+    const dateStr=toISODate_(d);
 
-  const start = nextSundayFrom(normYMD($("genStartDate")?.value || toYMD(new Date())));
-  if ($("genStartDate")) $("genStartDate").value = start;
-
-  const weeks = Number($("genWeeks")?.value || 8);
-  const venue = String($("genVenue")?.value || "Goodminton").trim();
-  const cap = Number($("genCap")?.value || 20);
-  const openOnly = !!$("genOpenOnly")?.checked;
-
-  const base = new Date(start + "T00:00:00");
-  const created = [];
-  for (let i=0;i<weeks;i++) {
-    const d = new Date(base);
-    d.setDate(d.getDate() + i*7);
-    const date = toYMD(d);
-    const isOpen = (i===0);
-
-    const r = await apiPost({
-      action:"admin_createSession",
-      adminKey,
+    const session={
       title:"YR Badminton",
-      date,
+      date: dateStr,
       start:"17:00",
       end:"19:00",
-      venue,
+      venue: venue,
       capacity: cap,
       note:"",
-      isOpen,
-      onlyOpen:false
-    });
-    if (!r.ok) throw new Error(r.error||"generate failed");
-    created.push(r.sessionId);
-  }
+      isOpen: (i===0) ? true : false
+    };
 
-  if (openOnly && created.length) {
-    const first = created[0];
-    await loadSessions();
-    for (const s of sessions) s.isOpen = (s.sessionId === first);
-    for (const s of sessions) {
-      const r = await apiPost({
-        action:"admin_updateSession",
-        adminKey,
-        session:{
-          sessionId:s.sessionId,
-          title:s.title,
-          date: nextSundayFrom(normYMD(s.date)),
-          start:normHM(s.start),
-          end:normHM(s.end),
-          venue:s.venue,
-          capacity:Number(s.capacity||20),
-          note:s.note||"",
-          isOpen:!!s.isOpen
-        }
-      });
-      if (!r.ok) throw new Error(r.error||"update failed");
-    }
+    const res=await apiPost({action:"admin_createSession", adminKey, session, openOnly: (openOnly && i===0)});
+    if(!res.ok) throw new Error(res.error||"create failed");
+    created += 1;
   }
 
   await loadSessions();
-  setMsg("genMsg", `已生成 ${created.length} 個星期日場次。`);
+  setMsg("genMsg", `已生成 ${created} 個星期日場次（第一個 OPEN，其餘關閉）。`);
 }
 
-async function loadRsvps() {
-  const adminKey = ensureKey();
-  const sid = String($("rsvpSession")?.value || "").trim();
-  if (!sid) {
-    $("rsvpsTable").innerHTML = `<div class="muted">請先選擇場次</div>`;
+
+
+function dedupeLatestByName_(rows){
+  const map=new Map();
+  for(const r of (rows||[])){
+    const k=String(r.name||"").trim().toLowerCase();
+    if(!k) continue;
+    // admin_listRsvps returns timestamp string
+    map.set(k, r);
+  }
+  return Array.from(map.values());
+}
+function sumByStatus_(rows, status){
+  const S=String(status||"").toUpperCase();
+  return (rows||[]).filter(r=>String(r.status||"").toUpperCase()===S)
+    .reduce((s,r)=>s+(Number(r.pax)||1),0);
+}
+function pickClosestOpenSessionIdAdmin_(){
+  const now=Date.now();
+  const open=sessions.filter(s=>!!s.isOpen);
+  if(!open.length) return (sessions[0]||{}).sessionId || "";
+  const ms = (s)=>{
+    const date=normalizeDateYYYYMMDD(s.date);
+    const start=normalizeTimeHHMM(s.start);
+    const dm=date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    const tm=start.match(/^(\d{2}):(\d{2})$/);
+    if(!dm||!tm) return NaN;
+    return new Date(Number(dm[1]),Number(dm[2])-1,Number(dm[3]),Number(tm[1]),Number(tm[2]),0,0).getTime();
+  };
+  const sorted=open.map(s=>({s,ms:ms(s)})).filter(x=>!isNaN(x.ms)).sort((a,b)=>a.ms-b.ms);
+  if(!sorted.length) return open[0].sessionId;
+  const upcoming=sorted.find(x=>x.ms>=now);
+  return (upcoming?upcoming.s.sessionId:sorted[sorted.length-1].s.sessionId) || "";
+}
+
+async function buildAnnouncement_(){
+  const sid = document.getElementById("announceSession")?.value || pickClosestOpenSessionIdAdmin_();
+  if(!sid) throw new Error("未有場次可生成公告");
+  const s = sessions.find(x=>x.sessionId===sid);
+  if(!s) throw new Error("session not found");
+
+  const date = normalizeDateYYYYMMDD(s.date);
+  const start = normalizeTimeHHMM(s.start);
+  const end = normalizeTimeHHMM(s.end);
+  const venue = String(s.venue||"").trim();
+  const title = String(s.title||"YR Badminton").trim() || "YR Badminton";
+  const link = `${location.origin}${location.pathname.replace(/admin\.html.*$/,'index.html')}`;
+
+  const zh = [];
+  zh.push(`📢 ${title} 打波登記 / RSVP`);
+  zh.push(`🗓️ ${date} (Sun) ${start}-${end}`);
+  zh.push(`📍 ${venue}`);
+  zh.push("");
+  zh.push("");
+  zh.push("請到以下連結更新出席狀態：");
+  zh.push(link);
+  zh.push("");
+  zh.push("Status：出席 YES / 缺席 NO");
+
+  const en = [];
+  en.push(`📢 ${title} RSVP`);
+  en.push(`🗓️ ${date} (Sun) ${start}-${end}`);
+  en.push(`📍 ${venue}`);
+  en.push("");
+  en.push("");
+  en.push("Please update your status via:");
+  en.push(link);
+  en.push("");
+  en.push("Status: YES / NO");
+
+  return zh.join("\n") + "\n\n--------------------\n\n" + en.join("\n");
+}
+
+async function updateAnnounceSummary_(){
+  const a=document.getElementById("announceSession");
+  const box=document.getElementById("announceSummary");
+  if(!a || !box) return;
+  const sid=a.value;
+  if(!sid){ box.textContent=""; return; }
+
+  const adminKey=ensureKey();
+  const data = await apiPost({action:"admin_listRsvps", adminKey, sessionId:sid});
+  if(!data.ok){ box.textContent = data.error || "list failed"; return; }
+
+  const cap = Number(data.summary?.cap||0)||0;
+  const confirmedPax = Number(data.summary?.confirmedPax||0)||0;
+  const waitPax = Number(data.summary?.waitlistPax||0)||0;
+  const waitLimit = Number(data.summary?.waitLimit||WAITLIST_LIMIT)||WAITLIST_LIMIT;
+
+  const remain = cap ? Math.max(0, cap-confirmedPax) : null;
+  const waitRemain = Math.max(0, waitLimit-waitPax);
+
+  box.textContent =
+    `人數摘要：成功報名 ${confirmedPax}/${cap||"-"}（剩餘 ${cap?remain:"-"}）｜候補 ${waitPax}/${waitLimit}（剩餘 ${waitRemain}）  /  ` +
+    `Summary: Confirmed ${confirmedPax}/${cap||"-"} (rem ${cap?remain:"-"}) | Waitlist ${waitPax}/${waitLimit} (rem ${waitRemain})`;
+}
+
+async function doAnnounce_(){
+  const ta=document.getElementById("announceText");
+  const msg=document.getElementById("announceMsg");
+  msg.textContent="";
+  ta.value="生成中...";
+  try{
+    const text = await buildAnnouncement_();
+    ta.value=text;
+    msg.textContent="已生成公告。";
+  }catch(e){
+    ta.value="";
+    msg.textContent = e.message || String(e);
+  }
+}
+async function copyAnnounce_(){
+  const ta=document.getElementById("announceText");
+  const msg=document.getElementById("announceMsg");
+  try{
+    ta.select();
+    ta.setSelectionRange(0, ta.value.length);
+    await navigator.clipboard.writeText(ta.value||"");
+    msg.textContent="已複製。";
+  }catch(e){
+    // fallback
+    try{
+      document.execCommand("copy");
+      msg.textContent="已複製。";
+    }catch(_){
+      msg.textContent="複製失敗，請手動選取複製。";
+    }
+  }
+}
+
+
+
+
+function lockSundayOnly_(inputId, msgId){
+  const elx=document.getElementById(inputId);
+  if(!elx) return;
+  const val=elx.value;
+  const d=parseISODate_(val);
+  if(!d) return;
+
+  // store previous valid value
+  const prev = elx.dataset.prevSunday || "";
+
+  if(d.getDay() !== 0){
+    // reject non-Sunday
+    let newVal = prev;
+    if(!newVal){
+      // if no previous, jump to next Sunday
+      const add = (7 - d.getDay()) % 7;
+      const s = new Date(d.getTime());
+      s.setDate(s.getDate()+add);
+      newVal = toISODate_(s);
+    }
+    elx.value = newVal;
+    setMsg(msgId, "只可選擇星期日 / Sundays only.");
     return;
   }
 
-  let data;
-  try {
-    data = await apiPost({action:"admin_listRsvps", adminKey, sessionId:sid});
-  } catch {
-    data = await apiGet({action:"list", sessionId:sid});
-  }
-
-  const rows = data.rsvps || data.current || [];
-  rsvpsCache = rows;
-
-  const sess = sessions.find(s=>s.sessionId===sid) || {};
-  $("rsvpsTable").innerHTML = buildRsvpTable(rows, sess);
+  // accept Sunday
+  elx.dataset.prevSunday = val;
 }
 
-function announceTemplate(session, sumLineZh, sumLineEn) {
-  const url = "https://lchjames.github.io/badminton-rsvp/index.html";
-  const date = normYMD(session.date);
-  const start = normHM(session.start);
-  const end = normHM(session.end);
-  const venue = String(session.venue||"").trim();
+function init(){
+  // Use local date to avoid UTC day shift issues
+  const now = new Date();
+  const today = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-${String(now.getDate()).padStart(2,"0")}`;
 
-  return `📢 YR Badminton 打波登記 / RSVP\n🗓️ ${date} (Sun) ${start}-${end}\n📍 ${venue}\n\n${sumLineZh}\n\n請到以下連結更新出席狀態：\n${url}\n\nStatus：出席 YES / 缺席 NO\n\n------------------------------\n\n📢 YR Badminton RSVP\n🗓️ ${date} (Sun) ${start}-${end}\n📍 ${venue}\n\n${sumLineEn}\n\nPlease update your status via:\n${url}\n\nStatus: YES / NO`;
-}
+  const nd = document.getElementById("newDate");
+  if(nd){ nd.setAttribute("min", today); nd.value = nd.value || today; }
 
-async function updateAnnounceSummary() {
-  const sid = String($("announceSession")?.value || "").trim();
-  if (!sid) return;
+  const gs = document.getElementById("genStartDate");
+  if(gs){ gs.setAttribute("min", today); gs.value = gs.value || today; }
 
-  try {
-    const adminKey = String($("adminKey")?.value || "").trim();
-    let rows = [];
-    if (adminKey) {
-      const data = await apiPost({action:"admin_listRsvps", adminKey, sessionId:sid});
-      rows = data.rsvps || data.current || [];
-    }
-    const sess = sessions.find(s=>s.sessionId===sid) || {};
-    const cap = Number(sess.capacity||0)||0;
-    const uniq = dedupeLatestByName(rows);
-    const buckets = allocateCurrent(uniq, cap, WAITLIST_LIMIT);
-
-    const zh = `👥 名額：${buckets.totals.confirmedPax}/${cap||"-"}（尚餘 ${cap?Math.max(0,cap-buckets.totals.confirmedPax):"-"}）\n📝 候補：${buckets.totals.waitlistPax}/${WAITLIST_LIMIT}（尚餘 ${Math.max(0, WAITLIST_LIMIT-buckets.totals.waitlistPax)}）`;
-    const en = `👥 Confirmed: ${buckets.totals.confirmedPax}/${cap||"-"} (Remaining ${cap?Math.max(0,cap-buckets.totals.confirmedPax):"-"})\n📝 Waitlist: ${buckets.totals.waitlistPax}/${WAITLIST_LIMIT} (Remaining ${Math.max(0, WAITLIST_LIMIT-buckets.totals.waitlistPax)})`;
-
-    $("announceSummary").textContent = zh + " / " + en;
-  } catch {
-    $("announceSummary").textContent = "";
-  }
-}
-
-async function doAnnounce() {
-  const adminKey = ensureKey();
-  const sid = String($("announceSession")?.value || "").trim();
-  const sess = sessions.find(s=>s.sessionId===sid);
-  if (!sess) return;
-
-  const data = await apiPost({action:"admin_listRsvps", adminKey, sessionId:sid});
-  const rows = data.rsvps || data.current || [];
-  const cap = Number(sess.capacity||0)||0;
-  const uniq = dedupeLatestByName(rows);
-  const buckets = allocateCurrent(uniq, cap, WAITLIST_LIMIT);
-
-  const zh = `👥 名額：${buckets.totals.confirmedPax}/${cap||"-"}（尚餘 ${cap?Math.max(0,cap-buckets.totals.confirmedPax):"-"}）\n📝 候補：${buckets.totals.waitlistPax}/${WAITLIST_LIMIT}（尚餘 ${Math.max(0, WAITLIST_LIMIT-buckets.totals.waitlistPax)}）`;
-  const en = `👥 Confirmed: ${buckets.totals.confirmedPax}/${cap||"-"} (Remaining ${cap?Math.max(0,cap-buckets.totals.confirmedPax):"-"})\n📝 Waitlist: ${buckets.totals.waitlistPax}/${WAITLIST_LIMIT} (Remaining ${Math.max(0, WAITLIST_LIMIT-buckets.totals.waitlistPax)})`;
-
-  $("announceText").value = announceTemplate(sess, zh, en);
-  setMsg("announceMsg","已生成。");
-  await updateAnnounceSummary();
-}
-
-async function copyAnnounce() {
-  const t = String($("announceText")?.value || "");
-  if (!t) return;
-  await navigator.clipboard.writeText(t);
-  setMsg("announceMsg","已複製。");
-}
-
-function init() {
-  const today = toYMD(new Date());
-
-  const nd = $("newDate");
-  if (nd) {
-    nd.setAttribute("min", today);
-    nd.value = today;
-    nd.addEventListener("change", ()=>lockSundayOnly("newDate","createMsg"));
-  }
-
-  const gs = $("genStartDate");
-  if (gs) {
-    gs.setAttribute("min", today);
-    gs.value = today;
-    gs.addEventListener("input", ()=>lockSundayOnly("genStartDate","genMsg"));
-    gs.addEventListener("change", ()=>lockSundayOnly("genStartDate","genMsg"));
-    lockSundayOnly("genStartDate","genMsg");
-  }
-
-  $("btnLoad")?.addEventListener("click", async ()=>{
+  on_("btnLoad","click", async ()=>{
     try{
       ensureKey();
       await loadSessions();
       setMsg("topMsg","已載入。");
     }catch(e){
-      setMsg("topMsg", e.message||String(e));
+      setMsg("topMsg", e?.message || String(e));
     }
   });
 
-  $("btnCreateSession")?.addEventListener("click", async ()=>{
+  on_("btnCreateSession","click", ()=>{
     setMsg("createMsg","");
-    try { await createSession(); }
-    catch(e){ setMsg("createMsg", e.message||String(e)); }
+    const p = safeCall_(createSession);
+    if(p && typeof p.catch === "function") p.catch(e=>setMsg("createMsg", e?.message||String(e)));
   });
 
-  $("btnGenSundays")?.addEventListener("click", async ()=>{
+  // Announcement
+  on_("announceSession","change", ()=>{
+    const p = safeCall_(updateAnnounceSummary_);
+    if(p && typeof p.catch === "function") p.catch(()=>{});
+  });
+  on_("btnAnnounce","click", ()=> safeCall_(doAnnounce_) );
+  on_("btnCopyAnnounce","click", ()=> safeCall_(copyAnnounce_) );
+
+  // Generator
+  on_("btnGenSundays","click", ()=>{
     setMsg("genMsg","");
-    try { await generateSundays(); }
-    catch(e){ setMsg("genMsg", e.message||String(e)); }
+    const p = safeCall_(generateSundays_);
+    if(p && typeof p.catch === "function") p.catch(e=>setMsg("genMsg", e?.message||String(e)));
   });
 
-  $("showClosed")?.addEventListener("change", ()=>renderSessionsTable());
-
-  $("btnLoadRsvps")?.addEventListener("click", async ()=>{
-    try { await loadRsvps(); }
-    catch(e){ setMsg("topMsg", e.message||String(e)); }
+  // Table / RSVP tools
+  on_("showClosed","change", ()=> safeCall_(renderSessionsTable) );
+  on_("btnLoadRsvps","click", ()=>{
+    const p = safeCall_(loadRsvps);
+    if(p && typeof p.catch === "function") p.catch(e=>setMsg("topMsg", e?.message||String(e)));
   });
-  $("rsvpFilter")?.addEventListener("change", ()=>loadRsvps().catch(()=>{}));
-  $("rsvpSession")?.addEventListener("change", ()=>loadRsvps().catch(()=>{}));
-
-  $("announceSession")?.addEventListener("change", ()=>updateAnnounceSummary().catch(()=>{}));
-  $("btnAnnounce")?.addEventListener("click", ()=>doAnnounce().catch(e=>setMsg("announceMsg", e.message||String(e))));
-  $("btnCopyAnnounce")?.addEventListener("click", ()=>copyAnnounce().catch(()=>{}));
+  on_("rsvpFilter","change", ()=>{
+    const p = safeCall_(loadRsvps);
+    if(p && typeof p.catch === "function") p.catch(()=>{});
+  });
+  on_("rsvpSession","change", ()=>{
+    const p = safeCall_(loadRsvps);
+    if(p && typeof p.catch === "function") p.catch(()=>{});
+  });
 
   setMsg("topMsg","請輸入 Admin Key 後按「載入 / Load」。");
 }
-
 init();

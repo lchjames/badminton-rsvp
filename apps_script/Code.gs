@@ -1,7 +1,7 @@
 const SPREADSHEET_ID = "1WAAWlRoyyYoq6B_cKBDaJBO_WS-YKjpnAYWMKlnk98w";
 const SHEET_SESSIONS = "sessions";
 const SHEET_RSVPS = "rsvps";
-const ADMIN_KEY = "JamesIsTheBest";
+const ADMIN_KEY = "YR-BADMINTON-ADMIN-2025";
 const WAITLIST_LIMIT = 6;
 
 function doGet(e) {
@@ -49,16 +49,9 @@ function index_(headerRow) {
   headerRow.forEach((h,i)=> map[String(h).trim()] = i);
   return map;
 }
-function normalizeIsOpen_(v) {
-  if (v === true) return true;
-  if (v === false) return false;
-  const s = String(v ?? "").trim().toUpperCase();
-  if (s === "FALSE" || s === "0" || s === "NO" || s === "") return false;
-  return s === "TRUE" || s === "1" || s === "YES";
-}
-
 function asBool_(v) {
-  return normalizeIsOpen_(v);
+  const s = String(v||"").toUpperCase().trim();
+  return s === "TRUE" || s === "1" || s === "YES";
 }
 function fmtDateCell_(v) {
   if (v instanceof Date) return Utilities.formatDate(v, Session.getScriptTimeZone(), "yyyy-MM-dd");
@@ -68,15 +61,6 @@ function fmtTimeCell_(v) {
   if (v instanceof Date) return Utilities.formatDate(v, Session.getScriptTimeZone(), "HH:mm");
   return String(v||"").trim();
 }
-
-function isSundayDate_(ymd) {
-  const s = String(ymd||"").trim();
-  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!m) return false;
-  const d = new Date(Number(m[1]), Number(m[2])-1, Number(m[3]));
-  return d.getDay() === 0; // Sunday
-}
-
 function appendRowAsText_(sheet, rowValues) {
   const lastRow = sheet.getLastRow();
   const range = sheet.getRange(lastRow+1, 1, 1, rowValues.length);
@@ -99,7 +83,7 @@ function getSessions_() {
     venue:String(r[idx.venue]||""),
     capacity:Number(String(r[idx.capacity]||"0"))||0,
     note:String(r[idx.note]||""),
-    isOpen:normalizeIsOpen_(r[idx.isOpen]),
+    isOpen:asBool_(r[idx.isOpen]),
   }));
 }
 function getSessionById_(sessionId) {
@@ -318,10 +302,9 @@ function adminCreateSession_(p) {
   const venue = String(s.venue||"").trim();
   const capacity = Number(s.capacity||20)||20;
   const note = String(s.note||"").trim();
-  const isOpen = normalizeIsOpen_(s.isOpen);
+  const isOpen = (s.isOpen===true) || asBool_(s.isOpen);
 
   if (!date) return { ok:false, error:"missing date" };
-  if (!isSundayDate_(date)) return { ok:false, error:"date must be Sunday" };
   if (!venue) return { ok:false, error:"missing venue" };
 
   if (p.openOnly) setAllOpen_(false);
@@ -337,8 +320,6 @@ function adminUpdateSession_(p) {
   const s = p.session || {};
   const targetId = String(s.sessionId||"").trim();
   if (!targetId) return { ok:false, error:"missing sessionId" };
-  if (s.date && !isSundayDate_(String(s.date))) return { ok:false, error:"date must be Sunday" };
-  if (s.venue!==undefined && String(s.venue).trim()==="") return { ok:false, error:"missing venue" };
 
   const sh = openSheet_(SHEET_SESSIONS);
   const values = sh.getDataRange().getValues();
@@ -354,7 +335,7 @@ function adminUpdateSession_(p) {
       sh.getRange(rowNumber, idx.venue+1).setValue(String(s.venue||""));
       sh.getRange(rowNumber, idx.capacity+1).setNumberFormat("@").setValue(String(Number(s.capacity||20)||20));
       sh.getRange(rowNumber, idx.note+1).setValue(String(s.note||""));
-      sh.getRange(rowNumber, idx.isOpen+1).setValue(normalizeIsOpen_(s.isOpen) ? "TRUE":"FALSE");
+      sh.getRange(rowNumber, idx.isOpen+1).setValue(s.isOpen ? "TRUE":"FALSE");
       return { ok:true };
     }
   }
@@ -365,8 +346,6 @@ function adminSetOnlyOpen_(p) {
   if (!isAdmin_(p.adminKey)) return { ok:false, error:"unauthorized" };
   const targetId = String(p.sessionId||"").trim();
   if (!targetId) return { ok:false, error:"missing sessionId" };
-  if (s.date && !isSundayDate_(String(s.date))) return { ok:false, error:"date must be Sunday" };
-  if (s.venue!==undefined && String(s.venue).trim()==="") return { ok:false, error:"missing venue" };
   const sh = openSheet_(SHEET_SESSIONS);
   const values = sh.getDataRange().getValues();
   const [header, ...rows] = values;
