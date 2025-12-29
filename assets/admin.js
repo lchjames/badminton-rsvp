@@ -8,7 +8,7 @@ function safeCall_(fn, ...args){
 }
 
 // assets/admin.js
-const API_BASE = "https://script.google.com/macros/s/AKfycbwv5Db3ePyGuiTDOGFDM8joTprsOmL3xpymGPVOv3ocaPeTb-QTEPySqafNxY_LhJwm/exec";
+const API_BASE = "https://script.google.com/macros/s/AKfycbwLCg1vLgzeXwheEBWKzCl4YnLlQTmRYZyU8G-FSLJl5MZK4s2uJHDQLnYdwegOvZ5T/exec";
 const WAITLIST_LIMIT = 6;
 
 const el=(id)=>document.getElementById(id);
