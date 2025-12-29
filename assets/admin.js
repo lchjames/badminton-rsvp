@@ -349,7 +349,7 @@ async function buildAnnouncement_(){
   zh.push("請到以下連結更新出席狀態：");
   zh.push(link);
   zh.push("");
-  zh.push("Status：出席 YES / 缺席 NO");
+  zh.push("Status：出席 / 缺席");
 
   const en = [];
   en.push(`📢 ${title} RSVP`);
