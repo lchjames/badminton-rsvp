@@ -1,7 +1,7 @@
 const SPREADSHEET_ID = "1WAAWlRoyyYoq6B_cKBDaJBO_WS-YKjpnAYWMKlnk98w";
 const SHEET_SESSIONS = "sessions";
 const SHEET_RSVPS = "rsvps";
-const ADMIN_KEY = "YR-BADMINTON-ADMIN-2025";
+const ADMIN_KEY = "JamesIsTheBest";
 const WAITLIST_LIMIT = 6;
 
 function doGet(e) {
@@ -61,15 +61,6 @@ function fmtTimeCell_(v) {
   if (v instanceof Date) return Utilities.formatDate(v, Session.getScriptTimeZone(), "HH:mm");
   return String(v||"").trim();
 }
-
-function isSundayDate_(ymd) {
-  const s = String(ymd||"").trim();
-  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!m) return false;
-  const d = new Date(Number(m[1]), Number(m[2])-1, Number(m[3]));
-  return d.getDay() === 0; // Sunday
-}
-
 function appendRowAsText_(sheet, rowValues) {
   const lastRow = sheet.getLastRow();
   const range = sheet.getRange(lastRow+1, 1, 1, rowValues.length);
@@ -168,63 +159,109 @@ function latestMapWithOverride_(sessionId, nameOverride, statusOverride, paxOver
   const sh = openSheet_(SHEET_RSVPS);
   const values = sh.getDataRange().getValues();
   const map = {};
+
   if (values.length >= 2) {
     const [header, ...rows] = values;
     const idx = index_(header);
-    for (let i=0;i<rows.length;i++) {
+
+    for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
-      if (String(row[idx.sessionId]) !== String(sessionId)) continue;
-      const nmRaw = String(row[idx.name]||"").trim();
-      const nm = nmRaw.toLowerCase();
-      if (!nm) continue;
-      const ts = (row[idx.timestamp] instanceof Date) ? row[idx.timestamp].toISOString() : String(row[idx.timestamp]||"");
-      const prev = map[nm];
+      if (String(row[idx.sessionId] || "") !== String(sessionId)) continue;
+
+      const nmRaw = String(row[idx.name] || "").trim();
+      const key = nmRaw.toLowerCase();
+      if (!key) continue;
+
+      const tsCell = row[idx.timestamp];
+      const ts = (tsCell instanceof Date) ? tsCell.toISOString() : String(tsCell || "");
+      const prev = map[key];
+
+      // Keep the latest record by timestamp (lexicographic ISO works)
       if (!prev || String(ts).localeCompare(String(prev.ts)) > 0) {
-        map[nm] = { key:nm, name:nmRaw, ts, status:String(row[idx.status]||"").toUpperCase(), pax:Number(String(row[idx.pax]||"1"))||1, note:String(row[idx.note]||"") };
+        map[key] = {
+          key,
+          name: nmRaw,
+          ts,
+          status: String(row[idx.status] || "").trim().toUpperCase(),
+          pax: Number(String(row[idx.pax] || "1")) || 1,
+          note: String(row[idx.note] || "")
+        };
       }
     }
   }
-  const key = String(nameOverride||"").trim().toLowerCase();
-  if (key) {
-    map[key] = { key, name:String(nameOverride||"").trim(), ts:new Date().toISOString(), status:String(statusOverride||"").toUpperCase(), pax:Number(paxOverride||1)||1, note:"" };
+
+  // Apply override as the newest record (used for placement simulation before writing)
+  const oName = String(nameOverride || "").trim();
+  const oKey = oName.toLowerCase();
+  if (oKey) {
+    map[oKey] = {
+      key: oKey,
+      name: oName,
+      ts: new Date().toISOString(),
+      status: String(statusOverride || "").trim().toUpperCase(),
+      pax: Number(paxOverride || 1) || 1,
+      note: ""
+    };
   }
+
   return map;
 }
 
-function allocateBuckets_(map, cap, waitLimit){
+
+function allocateBuckets_(map, cap, waitLimit) {
   const placementByKey = {};
   const yes = [];
   const no = [];
-  for (const k in map){
-    const r=map[k];
-    if (r.status==="YES") yes.push(r);
-    if (r.status==="NO") no.push(r);
-  }
-  // sort by last submit time (ascending) => earlier = higher priority
-  yes.sort((a,b)=>String(a.ts).localeCompare(String(b.ts)));
 
-  let used=0, wused=0;
-  const confirmed=[], waitlist=[], overflow=[];
-  for (const r of yes){
-    const pax = Number(r.pax||1)||1;
-    if (cap>0 && used + pax <= cap){
+  for (const k in map) {
+    const r = map[k];
+    const st = String(r.status || "").toUpperCase();
+    if (st === "YES") yes.push(r);
+    else if (st === "NO") no.push(r);
+  }
+
+  // Earlier submission has higher priority
+  yes.sort((a, b) => String(a.ts || "").localeCompare(String(b.ts || "")));
+
+  let used = 0;
+  let wused = 0;
+
+  const confirmed = [];
+  const waitlist = [];
+  const overflow = [];
+
+  for (const r of yes) {
+    const pax = Math.max(1, Number(r.pax) || 1);
+
+    if (used + pax <= cap) {
       used += pax;
       placementByKey[r.key] = "CONFIRMED";
       confirmed.push(r);
-    } else if (wused + pax <= waitLimit){
+      continue;
+    }
+
+    if (wused + pax <= waitLimit) {
       wused += pax;
       placementByKey[r.key] = "WAITLIST";
       waitlist.push(r);
-    } else {
-      placementByKey[r.key] = "OVERFLOW";
-      overflow.push(r);
+      continue;
     }
+
+    placementByKey[r.key] = "OVERFLOW";
+    overflow.push(r);
   }
-  for (const r of no){
-    placementByKey[r.key] = "NO";
-  }
-  return { placementByKey, confirmed, waitlist, overflow, totals:{ yesPax:used, cap:cap, waitPax:wused, waitLimit:waitLimit } };
+
+  for (const r of no) placementByKey[r.key] = "NO";
+
+  return {
+    placementByKey,
+    confirmed,
+    waitlist,
+    overflow,
+    totals: { yesPax: used, cap: cap, waitPax: wused, waitLimit: waitLimit }
+  };
 }
+
 
 function computeBuckets_(sessionId, cap, waitLimit){
   const map = latestMapWithOverride_(sessionId, null, null, null);
@@ -238,40 +275,47 @@ function computeBucketsWithOverride_(sessionId, nameOverride, statusOverride, pa
 
 
 function addRsvp_(p) {
-  const sessionId = String(p.sessionId||"").trim();
-  const name = String(p.name||"").trim();
-  const statusRaw = String(p.status||"").trim().toUpperCase();
-  const pax = Number(p.pax||1)||1;
-  const note = String(p.note||"").trim();
+  const sessionId = String(p.sessionId || "").trim();
+  const name = String(p.name || "").trim();
+  const statusRaw = String(p.status || "").trim().toUpperCase();
+  const pax = Math.max(1, Number(p.pax || 1) || 1);
+  const note = String(p.note || "").trim();
 
-  if (!sessionId || !name || !statusRaw) return { ok:false, error:"missing fields" };
-  if (statusRaw === "MAYBE") return { ok:false, error:"MAYBE is not an option" };
-  if (["YES","NO"].indexOf(statusRaw) === -1) return { ok:false, error:"invalid status" };
+  if (!sessionId || !name || !statusRaw) return { ok: false, error: "missing fields" };
+  if (statusRaw === "MAYBE") return { ok: false, error: "MAYBE is not an option" };
+  if (["YES", "NO"].indexOf(statusRaw) === -1) return { ok: false, error: "invalid status" };
 
   const session = getSessionById_(sessionId);
-  if (!session) return { ok:false, error:"session not found" };
-  const cap = Number(session.capacity||0)||0;
+  if (!session) return { ok: false, error: "session not found" };
 
-  // Check capacity +候補名額（只針對 YES）
-  if (statusRaw==="YES") {
-    const check = computeBucketsWithOverride_(sessionId, name, statusRaw, pax, cap, WAITLIST_LIMIT);
-    const key = String(name||"").trim().toLowerCase();
-    const placement = check.placementByKey[key];
-    if (placement === "OVERFLOW") return { ok:false, error:"full" };
+  // Optional: only allow RSVP for open sessions
+  if (!session.isOpen) return { ok: false, error: "session is closed" };
+
+  const cap = Number(session.capacity || 0) || 0;
+
+  // Simulate placement INCLUDING this new submission (override map),
+  // so the returned placement matches the intended UX deterministically.
+  let placement = "NO";
+  if (statusRaw === "YES") {
+    const map = latestMapWithOverride_(sessionId, name, "YES", pax);
+    const after = allocateBuckets_(map, cap, WAITLIST_LIMIT);
+    placement = after.placementByKey[String(name).trim().toLowerCase()] || "CONFIRMED";
+  } else {
+    placement = "NO";
   }
 
+  // Always record the RSVP (including OVERFLOW). This preserves history and matches scheme-2 behaviour.
   const sh = openSheet_(SHEET_RSVPS);
-  appendRowAsText_(sh, [new Date().toISOString(), sessionId, name, statusRaw, String(pax), note]);
+  const rowId = Utilities.getUuid();
+  const ts = new Date().toISOString();
 
-  // Return user experience message (confirmed vs候補)
-  if (statusRaw==="YES") {
-    const after = computeBuckets_(sessionId, cap, WAITLIST_LIMIT);
-    const key = String(name||"").trim().toLowerCase();
-    const placement = after.placementByKey[key] || "CONFIRMED";
-    return { ok:true, placement: placement };
-  }
-  return { ok:true, placement: "NO" };
+  // Expected RSVP sheet columns:
+  // rowId | sessionId | name | status | pax | note | timestamp
+  appendRowAsText_(sh, [rowId, sessionId, name, statusRaw, String(pax), note, ts]);
+
+  return { ok: true, placement: placement };
 }
+
 
 // --- Admin create session / court ---
 function slug_(s) {
@@ -314,7 +358,6 @@ function adminCreateSession_(p) {
   const isOpen = (s.isOpen===true) || asBool_(s.isOpen);
 
   if (!date) return { ok:false, error:"missing date" };
-  if (!isSundayDate_(date)) return { ok:false, error:"date must be Sunday" };
   if (!venue) return { ok:false, error:"missing venue" };
 
   if (p.openOnly) setAllOpen_(false);
@@ -330,8 +373,6 @@ function adminUpdateSession_(p) {
   const s = p.session || {};
   const targetId = String(s.sessionId||"").trim();
   if (!targetId) return { ok:false, error:"missing sessionId" };
-  if (s.date && !isSundayDate_(String(s.date))) return { ok:false, error:"date must be Sunday" };
-  if (s.venue!==undefined && String(s.venue).trim()==="") return { ok:false, error:"missing venue" };
 
   const sh = openSheet_(SHEET_SESSIONS);
   const values = sh.getDataRange().getValues();
@@ -358,8 +399,6 @@ function adminSetOnlyOpen_(p) {
   if (!isAdmin_(p.adminKey)) return { ok:false, error:"unauthorized" };
   const targetId = String(p.sessionId||"").trim();
   if (!targetId) return { ok:false, error:"missing sessionId" };
-  if (s.date && !isSundayDate_(String(s.date))) return { ok:false, error:"date must be Sunday" };
-  if (s.venue!==undefined && String(s.venue).trim()==="") return { ok:false, error:"missing venue" };
   const sh = openSheet_(SHEET_SESSIONS);
   const values = sh.getDataRange().getValues();
   const [header, ...rows] = values;

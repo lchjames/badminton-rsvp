@@ -5,7 +5,7 @@
  * 3) Basic UI contract guard to prevent silent breakage.
  */
 
-const API_BASE = "https://script.google.com/macros/s/AKfycby6BM-TP-4EnP7usmJigxuUrWtsTeWw83oRYPHQPXhfIsRmLjhbisIMeVNOngQkr9uG/exec";
+const API_BASE = "https://script.google.com/macros/s/AKfycbzEqzkHIcMor9K3BJFEmUoJjzgfL_4HDwX699gz-kvFIfyVvDNGCRqRSUx6JeoyOUq5/exec";
 const WAITLIST_LIMIT = 6;
 
 /* ===== Psycho lines (bilingual) ===== */

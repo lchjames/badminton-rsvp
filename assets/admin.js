@@ -5,7 +5,7 @@
 // - Date inputs: lock to Sunday only (front-end), backend also validates.
 // - Keep existing admin functions (create, generate, list, announce) without duplicates.
 
-const API_BASE = "https://script.google.com/macros/s/AKfycby6BM-TP-4EnP7usmJigxuUrWtsTeWw83oRYPHQPXhfIsRmLjhbisIMeVNOngQkr9uG/exec";
+const API_BASE = "https://script.google.com/macros/s/AKfycbzEqzkHIcMor9K3BJFEmUoJjzgfL_4HDwX699gz-kvFIfyVvDNGCRqRSUx6JeoyOUq5/exec";
 const WAITLIST_LIMIT = 6;
 
 const $ = (id) => document.getElementById(id);
