@@ -1,349 +1,323 @@
-// assets/app.js
-const API_BASE = "https://script.google.com/macros/s/AKfycbwv5Db3ePyGuiTDOGFDM8joTprsOmL3xpymGPVOv3ocaPeTb-QTEPySqafNxY_LhJwm/exec";
+/* YR Badminton – app.js (fixed)
+ * Key rules:
+ * 1) MAYBE only shows warning (NO API call).
+ * 2) Submit result message is based ONLY on backend placement (CONFIRMED/WAITLIST/OVERFLOW).
+ * 3) Basic UI contract guard to prevent silent breakage.
+ */
+
+const API_BASE = window.API_BASE || ""; // set in README or directly edit this value if needed
 const WAITLIST_LIMIT = 6;
 
+/* ===== Psycho lines (bilingual) ===== */
+const PSYCHO_LINES = [
+  {
+    zh: "😏『可能』其實等於冇答，大家會當你唔嚟。",
+    en: "😏 'Maybe' usually means 'not coming'. Others will assume you are out."
+  },
+  {
+    zh: "🤔 如果你真係想打，揀『出席』會比較實際。",
+    en: "🤔 If you really want to play, choosing 'Yes' works much better."
+  },
+  {
+    zh: "⏳ 名額有限，『可能』唔會幫你留位。",
+    en: "⏳ Slots are limited. 'Maybe' does not reserve a spot."
+  },
+  {
+    zh: "🫠 教練統計名單時，『可能』會被自動忽略。",
+    en: "🫠 When attendance is counted, 'Maybe' is often ignored."
+  }
+];
+let psychoIdx = 0;
+function nextPsychoLine() {
+  const line = PSYCHO_LINES[psychoIdx % PSYCHO_LINES.length];
+  psychoIdx += 1;
+  return `${line.zh}\n${line.en}`;
+}
 
+/* ===== DOM helpers ===== */
+function el(id){ return document.getElementById(id); }
+function setMsg(id, t){
+  const n = el(id);
+  if(!n) return;
+  n.textContent = t || "";
+}
+function escapeHtml(s){
+  return String(s ?? "")
+    .replaceAll("&","&amp;")
+    .replaceAll("<","&lt;")
+    .replaceAll(">","&gt;")
+    .replaceAll('"',"&quot;")
+    .replaceAll("'","&#39;");
+}
 
-/* ===== UI Contract Guard (Lock Structure) ===== */
-const REQUIRED_STATUS_VALUES = ["YES", "NO", "MAYBE"];
-function assertUiContract_() {
+/* ===== UI Contract Guard ===== */
+const REQUIRED_STATUS_VALUES = ["YES","NO","MAYBE"];
+function assertUiContract_(){
   const missing = [];
-  const reqIds = ["sessionSelect","name","pax","statusMsg","submitMsg","list","waitList","summary","waitSummary"];
-  reqIds.forEach(id => { if (!document.getElementById(id)) missing.push(`#${id}`); });
+  const ids = ["sessionSelect","name","pax","statusMsg","submitMsg","summary","list","waitSummary","waitList"];
+  ids.forEach(id => { if(!el(id)) missing.push("#"+id); });
 
   const radios = Array.from(document.querySelectorAll('input[name="status"][type="radio"]'));
   const values = radios.map(r => String(r.value||"").trim().toUpperCase());
-  REQUIRED_STATUS_VALUES.forEach(v => { if (!values.includes(v)) missing.push(`status:${v}`); });
+  REQUIRED_STATUS_VALUES.forEach(v => { if(!values.includes(v)) missing.push("status:"+v); });
 
-  if (missing.length) {
-    const msg = "頁面結構錯誤：缺少必要元件/選項：" + missing.join(", ")
-      + "。請更新 index.html 以包含 YES/NO/MAYBE。";
-    const top = document.getElementById("topMsg") || document.getElementById("submitMsg");
-    if (top) top.textContent = msg;
+  if(!API_BASE) missing.push("API_BASE");
+
+  if(missing.length){
+    const msg = "頁面結構/設定錯誤：缺少必要元件或選項：" + missing.join(", ");
+    setMsg("submitMsg", msg);
     throw new Error(msg);
   }
 }
-const PSYCHO_LINES = [
-  "「可能」唔係選項。請揀「出席 / 候補 / 缺席」。 / “Maybe” is not an option. Please choose YES / NO.",
-  "你揀「可能」= 未決定；隊伍唔會為你預留位。 / “Maybe” = undecided; no spot will be reserved.",
-  "如果你想打，請直接揀「出席」；唔得就揀「缺席」。 / If you want to play, choose YES; otherwise choose NO.",
-  "名額有限；「可能」會令安排更困難。 / Spots are limited; “Maybe” makes planning harder.",
-  "肯定係好人，所以請揀 YES / NO。 / Be nice: choose YES / NO.",
-];
-const MAYBE_COOLDOWN_MS = 900;
 
-const el = (id)=>document.getElementById(id);
-let sessions = [];
-let currentSessionId = null;
-let psychoIdx = 0;
-let remainingSeats = null;
-let remainingWait = null;
-
-function esc(s="") {
-  return String(s).replace(/[&<>"']/g,(c)=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c]));
-}
-function normalizeDateYYYYMMDD(v){
-  const s=String(v||"").trim();
-  if(!s) return "";
-  if(/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-  const d=new Date(s);
-  if(!isNaN(d.getTime())){
-    const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,"0"), dd=String(d.getDate()).padStart(2,"0");
-    return `${y}-${m}-${dd}`;
-  }
-  return s;
-}
-function normalizeTimeHHMM(v){
-  const s=String(v||"").trim();
-  if(!s) return "";
-  const m1=s.match(/^(\d{1,2}):(\d{2})$/);
-  if(m1) return `${m1[1].padStart(2,"0")}:${m1[2]}`;
-  const d=new Date(s);
-  if(!isNaN(d.getTime())) return `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
-  const m2=s.match(/(\d{1,2}):(\d{2})/);
-  if(m2) return `${m2[1].padStart(2,"0")}:${m2[2]}`;
-  return s;
-}
+/* ===== API ===== */
 async function apiGet(params){
-  const url = `${API_BASE}?${new URLSearchParams(params).toString()}`;
-  const res = await fetch(url);
-  if(!res.ok) throw new Error("GET failed");
-  return res.json();
+  const url = new URL(API_BASE);
+  Object.entries(params||{}).forEach(([k,v])=>url.searchParams.set(k, String(v)));
+  const r = await fetch(url.toString(), { method:"GET" });
+  const t = await r.text();
+  let j;
+  try{ j = JSON.parse(t); }catch(_){ throw new Error("Bad JSON: "+t); }
+  return j;
 }
-async function apiPost(payload){
-  const res = await fetch(API_BASE,{
+
+async function apiPost(body){
+  const r = await fetch(API_BASE, {
     method:"POST",
-    headers:{"Content-Type":"text/plain;charset=utf-8"},
-    body:JSON.stringify(payload)
+    headers:{ "Content-Type":"application/json" },
+    body: JSON.stringify(body||{})
   });
-  if(!res.ok) throw new Error("POST failed");
-  return res.json();
-}
-function setMsg(t){ el("msg").textContent = t||""; }
-function setWarning(t){
-  const w=el("statusWarning");
-  if(!t){ w.style.display="none"; w.textContent=""; return; }
-  w.style.display="block"; w.textContent=t;
-}
-function nextPsychoLine(){
-  const line=PSYCHO_LINES[psychoIdx % PSYCHO_LINES.length];
-  psychoIdx += 1;
-  return line;
-}
-function setSubmitCooldown(ms){
-  const btn=el("submitBtn");
-  btn.disabled=true;
-  window.setTimeout(()=>btn.disabled=false, ms);
+  const t = await r.text();
+  let j;
+  try{ j = JSON.parse(t); }catch(_){ throw new Error("Bad JSON: "+t); }
+  return j;
 }
 
-function enforceRadioAvailability(){
-  const yes=document.querySelector('input[name="status"][value="YES"]');
-  // No WAITLIST option anymore. YES will auto place into 候補 if over capacity.
-  if(yes){
-    const capFull = (remainingSeats!==null && remainingSeats<=0);
-    const waitFull = (remainingWait!==null && remainingWait<=0);
-    yes.disabled = capFull && waitFull;
-  }
+/* ===== Data ===== */
+let SESSIONS = [];
+let CURRENT_SESSION_ID = "";
+
+/* ===== Sessions ===== */
+function dayShort_(ymd){
+  const d = new Date(ymd + "T00:00:00");
+  const names = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  return names[d.getDay()] || "";
 }
-function parseSessionStartMs_(s){
-  const date=normalizeDateYYYYMMDD(s.date);
-  const start=normalizeTimeHHMM(s.start);
-  const dm=date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  const tm=start.match(/^(\d{2}):(\d{2})$/);
-  if(!dm||!tm) return NaN;
-  return new Date(Number(dm[1]),Number(dm[2])-1,Number(dm[3]),Number(tm[1]),Number(tm[2]),0,0).getTime();
-}
-function pickClosestOpenSessionId_(){
-  const now=Date.now();
-  const open=sessions.filter(s=>!!s.isOpen);
+
+function pickClosestOpenSessionId_(sessions){
+  const open = (sessions||[]).filter(s => !!s.isOpen);
   if(!open.length) return "";
-  const sorted=open.map(s=>({s,ms:parseSessionStartMs_(s)})).filter(x=>!isNaN(x.ms)).sort((a,b)=>a.ms-b.ms);
-  if(!sorted.length) return open[0].sessionId;
-  const upcoming=sorted.find(x=>x.ms>=now);
-  return (upcoming?upcoming.s.sessionId:sorted[sorted.length-1].s.sessionId) || "";
-}
-function renderSessionInfo(s){
-  const date=normalizeDateYYYYMMDD(s.date);
-  const start=normalizeTimeHHMM(s.start);
-  const end=normalizeTimeHHMM(s.end);
-  const cap=Number(s.capacity||0)||0;
-  const venue=String(s.venue||"").trim();
-  const note=String(s.note||"").trim();
-  el("sessionInfo").innerHTML = `
-    <div><b>${esc(s.title||"Badminton")}</b></div>
-    <div>${esc(date)} ${esc(start)}-${esc(end)}</div>
-    <div>${esc(venue)} ｜ 上限：${cap||"-"} ｜ 候補上限：${WAITLIST_LIMIT}${note?` ｜ ${esc(note)}`:""}</div>
-  `;
-}
-function dedupeLatestByName_(rsvps){
-  const by=new Map();
-  for(const r of (rsvps||[])){
-    const k=String(r.name||"").trim().toLowerCase();
-    if(!k) continue;
-    by.set(k,r);
-  }
-  return Array.from(by.values());
+  open.sort((a,b)=>{
+    const ad = `${a.date||""}T${a.start||"00:00"}`;
+    const bd = `${b.date||""}T${b.start||"00:00"}`;
+    return ad.localeCompare(bd);
+  });
+  return open[0].sessionId || "";
 }
 
-function allocateBucketsClient_(uniq, cap, waitLimit){
-  const yes = uniq.filter(r=>String(r.status||"").toUpperCase()==="YES")
-    .slice()
-    .sort((a,b)=>String(a.timestamp||"").localeCompare(String(b.timestamp||"")));
-  const no = uniq.filter(r=>String(r.status||"").toUpperCase()==="NO");
-
-  let used=0, wused=0;
-  const confirmed=[], waitlist=[], overflow=[];
-  for(const r of yes){
-    const pax=Number(r.pax||1)||1;
-    if(cap>0 && used + pax <= cap){
-      used += pax;
-      confirmed.push(r);
-    } else if(wused + pax <= waitLimit){
-      wused += pax;
-      waitlist.push(r);
-    } else {
-      overflow.push(r);
-    }
-  }
-  return { confirmed, waitlist, overflow, totals:{ confirmedPax:used, waitlistPax:wused } };
-}
-
-
-function renderLists(rsvps){
-  const uniq=dedupeLatestByName_(rsvps);
-
-  const sess=sessions.find(x=>x.sessionId===currentSessionId)||{};
-  const cap=Number(sess.capacity||0)||0;
-
-  const buckets = allocateBucketsClient_(uniq, cap, WAITLIST_LIMIT);
-  const confirmed = buckets.confirmed;
-  const waitlist = buckets.waitlist;
-
-  const yesSum = buckets.totals.confirmedPax;
-  const wlSum = buckets.totals.waitlistPax;
-
-  remainingSeats = cap ? Math.max(0, cap-yesSum) : null;
-  remainingWait = Math.max(0, WAITLIST_LIMIT-wlSum);
-
-  enforceRadioAvailability();
-
-  el("summary").innerHTML = cap
-    ? `<div class="small muted">名額：${yesSum}/${cap}（尚餘 ${Math.max(0, cap-yesSum)}）</div>`
-    : `<div class="small muted">名額：不限</div>`;
-
-  el("waitSummary").innerHTML =
-    `<div class="small muted">候補：${wlSum}/${WAITLIST_LIMIT}（尚餘 ${Math.max(0, WAITLIST_LIMIT-wlSum)}）</div>`;
-
-  el("yesList").innerHTML = confirmed.length
-    ? confirmed.sort((a,b)=>String(b.timestamp||"").localeCompare(String(a.timestamp||""))).map(r=>item(r,"CONFIRMED")).join("")
-    : `<div class="muted">暫時未有人成功報名</div>`;
-
-  el("waitList").innerHTML = waitlist.length
-    ? waitlist.sort((a,b)=>String(b.timestamp||"").localeCompare(String(a.timestamp||""))).map(r=>item(r,"WAITLIST")).join("")
-    : `<div class="muted">暫時未有人進入候補</div>`;
-}
-async function loadSessions(){
-(){
-  const data=await apiGet({action:"sessions"});
-  sessions=data.sessions||[];
-  const open=sessions.filter(s=>!!s.isOpen);
-  const sel=el("sessionSelect");
-  sel.innerHTML="";
+function renderSessionOptions_(sessions, selectedId){
+  const sel = el("sessionSelect");
+  sel.innerHTML = "";
+  const open = (sessions||[]).filter(s => !!s.isOpen);
   if(!open.length){
-    const opt=document.createElement("option");
-    opt.value=""; opt.textContent="暫時無開放場次 / No open session";
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "暫時無開放場次 / No open sessions";
     sel.appendChild(opt);
-    currentSessionId=null;
-    el("sessionInfo").textContent="";
+    sel.disabled = true;
     return;
   }
-  open.sort((a,b)=> normalizeDateYYYYMMDD(a.date).localeCompare(normalizeDateYYYYMMDD(b.date)) ||
-                    normalizeTimeHHMM(a.start).localeCompare(normalizeTimeHHMM(b.start)));
-  for(const s of open){
-    const opt=document.createElement("option");
-    opt.value=s.sessionId;
-    opt.textContent=`${normalizeDateYYYYMMDD(s.date)} ${normalizeTimeHHMM(s.start)}-${normalizeTimeHHMM(s.end)} · ${s.venue}`;
+  sel.disabled = false;
+
+  open.sort((a,b)=>{
+    const ad = `${a.date||""}T${a.start||"00:00"}`;
+    const bd = `${b.date||""}T${b.start||"00:00"}`;
+    return ad.localeCompare(bd);
+  });
+
+  open.forEach(s=>{
+    const opt = document.createElement("option");
+    opt.value = s.sessionId;
+    opt.textContent = `${s.date} (${dayShort_(s.date)}) ${s.start}-${s.end} · ${s.venue}`;
     sel.appendChild(opt);
-  }
-  const pick=pickClosestOpenSessionId_();
-  if(pick) sel.value=pick;
-  currentSessionId=sel.value;
-  const s=sessions.find(x=>x.sessionId===currentSessionId);
-  if(s) renderSessionInfo(s);
-}
-async function loadRsvps(){
-  if(!currentSessionId){
-    el("list").innerHTML=`<div class="muted">未有開放場次</div>`;
-    el("waitList").innerHTML="";
-    el("summary").textContent="";
-    el("waitSummary").textContent="";
-    return;
-  }
-  const data=await apiGet({action:"list", sessionId: currentSessionId});
-  renderLists(data.rsvps||[]);
+  });
+
+  sel.value = selectedId || open[0].sessionId;
 }
 
-function wireMaybeWarning_(){
-  const radios = Array.from(document.querySelectorAll('input[name="status"]'));
-  if(!radios.length) return;
-  const onChange = ()=>{
-    const status=document.querySelector('input[name="status"]:checked')?.value;
-    if (status === "MAYBE") {
-  const line = nextPsychoLine();
-  setMsg("statusMsg", line);
-  setMsg("submitMsg", "「可能 / MAYBE」不會提交登記，請改選 YES 或 NO。
-'Maybe' will NOT submit. Please choose YES or NO.");
-  return; // MUST NOT call API
-}else{
-      // do not erase other warnings caused by capacity checks; only clear if current warning is a psycho line
-      const w=el("statusWarning");
-      if(w && w.textContent && w.textContent.includes("Maybe")){
-        setWarning("");
-      }
+async function loadSessions(){
+  setMsg("submitMsg","");
+  setMsg("statusMsg","");
+  const data = await apiGet({ action:"sessions" });
+  if(!data.ok) throw new Error(data.error || "load sessions failed");
+  SESSIONS = data.sessions || [];
+  CURRENT_SESSION_ID = pickClosestOpenSessionId_(SESSIONS);
+  renderSessionOptions_(SESSIONS, CURRENT_SESSION_ID);
+  if(CURRENT_SESSION_ID){
+    await loadAndRenderRsvps_(CURRENT_SESSION_ID);
+  }else{
+    renderSummary_({cap:0, confirmed:0, remaining:0, wait:0, waitRemain:WAITLIST_LIMIT});
+    renderLists_([], []);
+  }
+}
+
+/* ===== RSVP list & allocation (display only) ===== */
+function dedupeLatestByName_(rows){
+  const m = new Map();
+  (rows||[]).forEach(r=>{
+    const name = String(r.name||"").trim().toLowerCase();
+    if(!name) return;
+    const ts = new Date(r.timestamp || 0).getTime() || 0;
+    const prev = m.get(name);
+    if(!prev || ts >= (prev._ts||0)){
+      m.set(name, { ...r, _ts: ts });
     }
-  };
-  radios.forEach(r=>r.addEventListener("change", onChange));
+  });
+  return Array.from(m.values()).sort((a,b)=> (b._ts||0) - (a._ts||0));
 }
 
+function allocateForDisplay_(rows, cap, waitLimit){
+  const yes = (rows||[]).filter(r => String(r.status||"").toUpperCase()==="YES");
+  yes.sort((a,b)=>(a._ts||0)-(b._ts||0));
+
+  const confirmed = [];
+  const waitlist = [];
+  let used = 0;
+
+  for(const r of yes){
+    const pax = Math.max(1, Number(r.pax)||1);
+    if(used + pax <= cap){
+      confirmed.push(r);
+      used += pax;
+    }else if(waitlist.length < waitLimit){
+      waitlist.push(r);
+    }
+  }
+  return { confirmed, waitlist, used };
+}
+
+function renderSummary_(s){
+  el("summary").innerHTML = `
+    <div class="kpi">
+      <div class="kpi-title">目前出席名單 / Current Attendees</div>
+      <div class="kpi-value">名額：${escapeHtml(s.confirmed)}/${escapeHtml(s.cap)}（尚餘 ${escapeHtml(s.remaining)}）</div>
+    </div>`;
+  el("waitSummary").innerHTML = `
+    <div class="kpi">
+      <div class="kpi-title">候補名單 / Waitlist</div>
+      <div class="kpi-value">候補：${escapeHtml(s.wait)}/${escapeHtml(WAITLIST_LIMIT)}（尚餘 ${escapeHtml(s.waitRemain)}）</div>
+    </div>`;
+}
+
+function renderLists_(confirmed, waitlist){
+  const list = el("list");
+  const wlist = el("waitList");
+
+  list.innerHTML = confirmed.length
+    ? confirmed.map(r=>`<li>${escapeHtml(r.name)} <span class="muted">(${escapeHtml(r.pax||1)})</span></li>`).join("")
+    : `<li class="muted">暫時無出席 / No confirmed attendees</li>`;
+
+  wlist.innerHTML = waitlist.length
+    ? waitlist.map(r=>`<li>${escapeHtml(r.name)} <span class="muted">(${escapeHtml(r.pax||1)})</span></li>`).join("")
+    : `<li class="muted">暫時無候補 / No one on waitlist</li>`;
+}
+
+async function loadAndRenderRsvps_(sessionId){
+  const data = await apiGet({ action:"list", sessionId });
+  if(!data.ok) throw new Error(data.error || "load rsvps failed");
+  const rows = dedupeLatestByName_(data.current || data.rows || []);
+  const sess = (SESSIONS||[]).find(s=>s.sessionId===sessionId) || {};
+  const cap = Math.max(0, Number(sess.capacity)||0);
+
+  const buckets = allocateForDisplay_(rows, cap, WAITLIST_LIMIT);
+  renderSummary_({
+    cap,
+    confirmed: buckets.used,
+    remaining: Math.max(0, cap - buckets.used),
+    wait: buckets.waitlist.length,
+    waitRemain: Math.max(0, WAITLIST_LIMIT - buckets.waitlist.length)
+  });
+  renderLists_(buckets.confirmed, buckets.waitlist);
+}
+
+/* ===== Submit ===== */
+function getSelectedStatus(){
+  const sel = document.querySelector('input[name="status"]:checked');
+  return sel ? String(sel.value||"").toUpperCase() : "";
+}
+
+async function submitRsvp_(ev){
+  ev?.preventDefault?.();
+  setMsg("submitMsg","");
+  setMsg("statusMsg","");
+
+  const sessionId = el("sessionSelect").value;
+  const name = String(el("name").value||"").trim();
+  const pax = Math.max(1, Number(el("pax").value)||1);
+  const status = getSelectedStatus();
+
+  if(!sessionId){ setMsg("submitMsg","請先選擇場次 / Please select a session."); return; }
+  if(!name){ setMsg("submitMsg","請輸入姓名 / Please enter your name."); return; }
+  if(!status){ setMsg("submitMsg","請選擇狀態 / Please select a status."); return; }
+
+  if(status === "MAYBE"){
+    setMsg("statusMsg", nextPsychoLine());
+    setMsg("submitMsg", "「可能 / MAYBE」不會提交登記，請改選 YES 或 NO。\n'Maybe' will NOT submit. Please choose YES or NO.");
+    return; // MUST NOT call API
+  }
+
+  const res = await apiPost({
+    action: "rsvp",
+    sessionId,
+    name,
+    status,
+    pax,
+    note: ""
+  });
+
+  if(!res.ok){
+    setMsg("submitMsg", res.error || "提交失敗 / Submit failed.");
+    return;
+  }
+
+  const placement = String(res.placement || "").toUpperCase();
+  if(placement === "CONFIRMED"){
+    setMsg("submitMsg","你已成功報名出席 / Successfully registered.");
+  }else if(placement === "WAITLIST"){
+    setMsg("submitMsg","你已進入候補名單 / You are on the waitlist.");
+  }else if(placement === "OVERFLOW"){
+    setMsg("submitMsg","已記錄，但已超出候補上限 / Recorded but overflowed waitlist.");
+  }else{
+    setMsg("submitMsg","已更新 / Updated.");
+  }
+
+  CURRENT_SESSION_ID = sessionId;
+  await loadAndRenderRsvps_(sessionId);
+}
+
+/* ===== Init ===== */
 async function init(){
-  
   assertUiContract_();
-await loadSessions();
-  await loadRsvps();
 
-  document.querySelectorAll('input[name="status"]').forEach(r=>r.addEventListener("change",(e)=>{
-    if(e.target.value==="MAYBE"){
-      setWarning(nextPsychoLine());
-      setMsg("提示：你揀咗「可能」，請改為「出席 / 候補 / 缺席」。");
-      setSubmitCooldown(MAYBE_COOLDOWN_MS);
-    } else setWarning("");
-  }));
-
-  el("sessionSelect")?.addEventListener("change", async (e)=>{
-    currentSessionId=e.target.value;
-    const s=sessions.find(x=>x.sessionId===currentSessionId);
-    if(s) renderSessionInfo(s);
-    setWarning(""); setMsg("");
-    await loadRsvps();
+  el("sessionSelect").addEventListener("change", async ()=>{
+    const sid = el("sessionSelect").value;
+    if(sid){
+      CURRENT_SESSION_ID = sid;
+      await loadAndRenderRsvps_(sid);
+    }
   });
 
-  el("cancelBtn")?.addEventListener("click", async ()=>{
-    try{
-      setMsg("");
-      if(!currentSessionId){ setMsg("暫時未有開放場次。"); return; }
-      const name=el("name").value.trim();
-      if(!name){ setMsg("請先填姓名 / 暱稱。"); return; }
-      const res=await apiPost({action:"rsvp", sessionId: currentSessionId, name, status:"NO", pax:1, note:(el("note").value||"").trim()||"Cancelled"});
-      if(!res?.ok){ setMsg(`取消失敗：${res?.error||"未知錯誤"}`); return; }
-      setMsg("已取消（已更新為 NO）。 / Cancelled (set to NO).");
-      await loadRsvps();
-    }catch(e){ setMsg("取消失敗，請稍後再試。"); }
-  });
+  const form = document.querySelector("form");
+  if(form){
+    form.addEventListener("submit", submitRsvp_);
+  }else{
+    const btn = el("btnSubmit");
+    if(btn) btn.addEventListener("click", submitRsvp_);
+  }
 
-  el("rsvpForm")?.addEventListener("submit", async (e)=>{
-    e.preventDefault();
-    setMsg("");
-    const btn=el("submitBtn"); btn.disabled=true;
-    try{
-      if(!currentSessionId){ setMsg("暫時未有開放場次。"); return; }
-      const name=el("name").value.trim();
-      const pax=Number(el("pax").value||1)||1;
-      const note=el("note").value.trim();
-      const status=document.querySelector('input[name="status"]:checked')?.value;
-      if(!name){ setMsg("請填寫姓名 / 暱稱。"); return; }
-      if(status==="MAYBE"){
-        setWarning(nextPsychoLine());
-        setMsg("「可能」唔係選項，請改為「出席 / 缺席」。 / “Maybe” is not an option. Please choose YES / NO.");
-        setSubmitCooldown(MAYBE_COOLDOWN_MS);
-        return;
-      }
-      const res=await apiPost({action:"rsvp", sessionId: currentSessionId, name, status, pax, note});
-      if(!res?.ok){
-        const err=String(res.error||"").toLowerCase();
-        if(err.includes("full")){
-          setMsg("名額及候補名單已滿 / Full (including waitlist).");
-          setWarning("名額及候補名單已滿 / Full (including waitlist).");
-        } else if(err.includes("waitlist")){
-          setMsg(`候補已滿（最多 ${WAITLIST_LIMIT}）。`);
-          setWarning(`候補已滿（最多 ${WAITLIST_LIMIT}）。`);
-        } else setMsg(`提交失敗：${res.error||"未知錯誤"}`);
-        await loadRsvps();
-        return;
-      }
-      const placement = String(res.placement || "").toUpperCase();
-if(placement==="WAITLIST"){
-  setMsg("名額已滿，你已進入候補名單。 / The session is full. You are placed on the waitlist.");
-} else if(placement==="CONFIRMED"){
-  setMsg("你已成功報名。 / You are successfully registered.");
-} else if(placement==="OVERFLOW"){
-  setMsg("已記錄，但已超出候補上限 / Recorded but overflowed waitlist");
-} else {
-  setMsg("已更新。 / Updated.");
-}
-      setWarning("");
-      await loadRsvps();
-    }catch(err){ setMsg("提交失敗，請稍後再試。"); }
-    finally{ btn.disabled=false; }
+  await loadSessions().catch(e=>{
+    setMsg("submitMsg", e.message || String(e));
   });
 }
-init();
+
+document.addEventListener("DOMContentLoaded", ()=>{ init(); });

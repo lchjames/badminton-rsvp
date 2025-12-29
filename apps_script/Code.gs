@@ -61,6 +61,15 @@ function fmtTimeCell_(v) {
   if (v instanceof Date) return Utilities.formatDate(v, Session.getScriptTimeZone(), "HH:mm");
   return String(v||"").trim();
 }
+
+function isSundayDate_(ymd) {
+  const s = String(ymd||"").trim();
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return false;
+  const d = new Date(Number(m[1]), Number(m[2])-1, Number(m[3]));
+  return d.getDay() === 0; // Sunday
+}
+
 function appendRowAsText_(sheet, rowValues) {
   const lastRow = sheet.getLastRow();
   const range = sheet.getRange(lastRow+1, 1, 1, rowValues.length);
@@ -248,7 +257,7 @@ function addRsvp_(p) {
     const check = computeBucketsWithOverride_(sessionId, name, statusRaw, pax, cap, WAITLIST_LIMIT);
     const key = String(name||"").trim().toLowerCase();
     const placement = check.placementByKey[key];
-    // OVERFLOW: still record the RSVP; placement will be returned as OVERFLOW
+    if (placement === "OVERFLOW") return { ok:false, error:"full" };
   }
 
   const sh = openSheet_(SHEET_RSVPS);
@@ -305,6 +314,7 @@ function adminCreateSession_(p) {
   const isOpen = (s.isOpen===true) || asBool_(s.isOpen);
 
   if (!date) return { ok:false, error:"missing date" };
+  if (!isSundayDate_(date)) return { ok:false, error:"date must be Sunday" };
   if (!venue) return { ok:false, error:"missing venue" };
 
   if (p.openOnly) setAllOpen_(false);
@@ -320,6 +330,8 @@ function adminUpdateSession_(p) {
   const s = p.session || {};
   const targetId = String(s.sessionId||"").trim();
   if (!targetId) return { ok:false, error:"missing sessionId" };
+  if (s.date && !isSundayDate_(String(s.date))) return { ok:false, error:"date must be Sunday" };
+  if (s.venue!==undefined && String(s.venue).trim()==="") return { ok:false, error:"missing venue" };
 
   const sh = openSheet_(SHEET_SESSIONS);
   const values = sh.getDataRange().getValues();
@@ -346,6 +358,8 @@ function adminSetOnlyOpen_(p) {
   if (!isAdmin_(p.adminKey)) return { ok:false, error:"unauthorized" };
   const targetId = String(p.sessionId||"").trim();
   if (!targetId) return { ok:false, error:"missing sessionId" };
+  if (s.date && !isSundayDate_(String(s.date))) return { ok:false, error:"date must be Sunday" };
+  if (s.venue!==undefined && String(s.venue).trim()==="") return { ok:false, error:"missing venue" };
   const sh = openSheet_(SHEET_SESSIONS);
   const values = sh.getDataRange().getValues();
   const [header, ...rows] = values;
