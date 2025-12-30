@@ -9,3 +9,12 @@ Admin features:
 
 IMPORTANT:
 You must update Apps Script to support the new admin actions listed in the chat message and redeploy as a new version.
+
+
+### Admin Booking Status Definition
+
+- CONFIRMED: Player is within capacity.
+- WAITLIST: Player queued due to capacity.
+- NO: Player not attending.
+
+Note: YES is user input only and not used in admin filters.

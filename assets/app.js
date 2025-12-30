@@ -135,8 +135,8 @@ async function loadList(sessionId) {
   const cap = Math.max(0, Number(s.capacity)||0);
   const b = allocateDisplay(rows, cap);
 
-  el("summary").textContent = `名額：${b.used}/${cap}（尚餘 ${Math.max(0,cap-b.used)}）`;
-  el("waitSummary").textContent = `候補：${b.waitUsed}/${WAITLIST_LIMIT}（尚餘 ${Math.max(0,WAITLIST_LIMIT-b.waitUsed)}）`;
+  el("summary").textContent = `名額：${b.used}/${cap}（尚餘 ${Math.max(0,cap-b.used)}） · Confirmed: ${b.used}/${cap} (Remaining ${Math.max(0,cap-b.used)})`;
+  el("waitSummary").textContent = `候補：${b.waitUsed}/${WAITLIST_LIMIT}（尚餘 ${Math.max(0,WAITLIST_LIMIT-b.waitUsed)}） · Waitlist: ${b.waitUsed}/${WAITLIST_LIMIT} (Remaining ${Math.max(0,WAITLIST_LIMIT-b.waitUsed)})`;
 
   el("list").innerHTML = b.confirmed.length
     ? "<ul>"+b.confirmed.map(r=>`<li>${esc(r.name)} <span class="muted">(${esc(r.pax||1)})</span></li>`).join("")+"</ul>"
