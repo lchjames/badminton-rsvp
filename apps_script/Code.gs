@@ -17,7 +17,7 @@ function doGet(e) {
 
 function doPost(e) {
   try {
-    const body = JSON.parse((e && e.postData && e.postData.contents) ? e.postData.contents : "{}");
+    const body = JSON.parse((e.postData && e.postData.contents) ? e.postData.contents : "{}");
     const action = String(body.action || "").toLowerCase();
 
     if (action === "rsvp") return json_(addRsvp_(body));
@@ -35,13 +35,7 @@ function doPost(e) {
 }
 
 function json_(obj) {
-  return ContentService
-    .createTextOutput(JSON.stringify(obj))
-    .setMimeType(ContentService.MimeType.JSON)
-    // CORS for GitHub Pages
-    .setHeader("Access-Control-Allow-Origin", "*")
-    .setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
-    .setHeader("Access-Control-Allow-Headers", "Content-Type");
+  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
 }
 function isAdmin_(k) { return String(k||"") === String(ADMIN_KEY); }
 function openSheet_(name) {
@@ -67,12 +61,75 @@ function fmtTimeCell_(v) {
   if (v instanceof Date) return Utilities.formatDate(v, Session.getScriptTimeZone(), "HH:mm");
   return String(v||"").trim();
 }
+
+function tsMillis_(v) {
+  // Accept Date objects, ISO strings, or 'yyyy-MM-dd HH:mm:ss' like strings.
+  try {
+    if (v instanceof Date) return v.getTime();
+    const s = String(v || "").trim();
+    if (!s) return 0;
+    // Normalize common non-ISO format: 'YYYY-MM-DD HH:mm:ss' -> 'YYYY-MM-DDTHH:mm:ss'
+    const norm = s.includes("T") ? s : s.replace(" ", "T");
+    const ms = Date.parse(norm);
+    return isNaN(ms) ? 0 : ms;
+  } catch (e) {
+    return 0;
+  }
+}
+
 function appendRowAsText_(sheet, rowValues) {
   const lastRow = sheet.getLastRow();
   const range = sheet.getRange(lastRow+1, 1, 1, rowValues.length);
   range.setNumberFormat("@");
   range.setValues([rowValues.map(v => String(v ?? ""))]);
 }
+
+function upsertRsvpRow_(sh, sessionId, name, status, pax, note){
+  const values = sh.getDataRange().getValues();
+  if (values.length < 1) throw new Error("RSVP sheet has no header");
+  const header = values[0];
+  const idx = index_(header);
+  const key = String(name||"").trim().toLowerCase();
+  const nowIso = new Date().toISOString();
+
+  // Find latest existing row for same (sessionId, name) from bottom (most recent sheet row)
+  let targetRowNumber = 0; // 1-based in sheet
+  for (let r = values.length-1; r >= 1; r--){
+    const row = values[r];
+    if (String(row[idx.sessionId]||"") !== String(sessionId)) continue;
+    const nm = String(row[idx.name]||"").trim().toLowerCase();
+    if (!nm || nm !== key) continue;
+    targetRowNumber = r + 1; // because values[0] is header at row 1
+    break;
+  }
+
+  // Build row values aligned to header
+  function buildRow(existingRow){
+    const out = existingRow ? existingRow.slice() : new Array(header.length).fill("");
+    if (idx.rowId !== undefined && !out[idx.rowId]) out[idx.rowId] = Utilities.getUuid();
+    if (idx.sessionId !== undefined) out[idx.sessionId] = String(sessionId);
+    if (idx.name !== undefined) out[idx.name] = String(name);
+    if (idx.status !== undefined) out[idx.status] = String(status).toUpperCase();
+    if (idx.pax !== undefined) out[idx.pax] = String(Number(pax||1)||1);
+    if (idx.note !== undefined) out[idx.note] = String(note||"");
+    if (idx.timestamp !== undefined) out[idx.timestamp] = nowIso;
+    return out.map(v => String(v ?? ""));
+  }
+
+  if (targetRowNumber > 0){
+    const existing = values[targetRowNumber-1];
+    const newRow = buildRow(existing);
+    const range = sh.getRange(targetRowNumber, 1, 1, header.length);
+    range.setNumberFormat("@");
+    range.setValues([newRow]);
+  } else {
+    const newRow = buildRow(null);
+    const range = sh.getRange(sh.getLastRow()+1, 1, 1, header.length);
+    range.setNumberFormat("@");
+    range.setValues([newRow]);
+  }
+}
+
 
 function getSessions_() {
   const sh = openSheet_(SHEET_SESSIONS);
@@ -142,7 +199,7 @@ function computeTotalsWithOverride_(sessionId, nameOverride, statusOverride, pax
       if (!nm) continue;
       const ts = (row[idx.timestamp] instanceof Date) ? row[idx.timestamp].toISOString() : String(row[idx.timestamp]||"");
       const prev = map[nm];
-      if (!prev || String(ts).localeCompare(String(prev.ts)) > 0) {
+      if (!prev || tsMillis_(ts) > tsMillis_(prev.ts)) {
         map[nm] = { ts, status:String(row[idx.status]||"").toUpperCase(), pax:Number(String(row[idx.pax]||"1"))||1 };
       }
     }
@@ -176,7 +233,7 @@ function latestMapWithOverride_(sessionId, nameOverride, statusOverride, paxOver
       if (!nm) continue;
       const ts = (row[idx.timestamp] instanceof Date) ? row[idx.timestamp].toISOString() : String(row[idx.timestamp]||"");
       const prev = map[nm];
-      if (!prev || String(ts).localeCompare(String(prev.ts)) > 0) {
+      if (!prev || tsMillis_(ts) > tsMillis_(prev.ts)) {
         map[nm] = { key:nm, name:nmRaw, ts, status:String(row[idx.status]||"").toUpperCase(), pax:Number(String(row[idx.pax]||"1"))||1, note:String(row[idx.note]||"") };
       }
     }
@@ -198,9 +255,8 @@ function allocateBuckets_(map, cap, waitLimit){
     if (r.status==="NO") no.push(r);
   }
   // sort by last submit time (ascending) => earlier = higher priority
-  yes.sort((a,b)=>String(a.ts).localeCompare(String(b.ts)));
-
-  let used=0, wused=0;
+  yes.sort((a,b)=>tsMillis_(a.ts) - tsMillis_(b.ts));
+let used=0, wused=0;
   const confirmed=[], waitlist=[], overflow=[];
   for (const r of yes){
     const pax = Number(r.pax||1)||1;
@@ -258,9 +314,8 @@ function addRsvp_(p) {
   }
 
   const sh = openSheet_(SHEET_RSVPS);
-  appendRowAsText_(sh, [new Date().toISOString(), sessionId, name, statusRaw, String(pax), note]);
-
-  // Return user experience message (confirmed vs候補)
+  upsertRsvpRow_(sh, sessionId, name, statusRaw, pax, note);
+// Return user experience message (confirmed vs候補)
   if (statusRaw==="YES") {
     const after = computeBuckets_(sessionId, cap, WAITLIST_LIMIT);
     const key = String(name||"").trim().toLowerCase();
@@ -549,9 +604,3 @@ function closePastSessions_() {
   return { closed };
 }
 
-
-
-function doOptions(e){
-  // Preflight support (may not be invoked on all deployments)
-  return json_({ ok:true });
-}

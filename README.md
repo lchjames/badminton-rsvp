@@ -11,10 +11,13 @@ IMPORTANT:
 You must update Apps Script to support the new admin actions listed in the chat message and redeploy as a new version.
 
 
-### Admin Booking Status Definition
+## Timestamp & Sorting (Important)
 
-- CONFIRMED: Player is within capacity.
-- WAITLIST: Player queued due to capacity.
-- NO: Player not attending.
+This project relies on RSVP submission time to allocate CONFIRMED vs WAITLIST fairly.
+To avoid incorrect ordering, the backend now writes timestamps in ISO 8601 (`new Date().toISOString()`)
+and always sorts by real time (Date.parse), not string comparison.
 
-Note: YES is user input only and not used in admin filters.
+## Cancel / Update Behavior
+
+RSVP submissions are now **upserts**: for the same `(sessionId, name)`, submitting again updates the existing row
+instead of appending a new row. This prevents having both YES and NO records for the same person.
