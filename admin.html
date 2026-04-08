@@ -41,12 +41,12 @@
       <div><label>Start</label><input id="newStart" value="17:00" /></div>
       <div><label>End</label><input id="newEnd" value="19:00" /></div>
       <div><label>Venue (Court)</label><input id="newVenue" value="Goodminton" /></div>
-      <div><label>Capacity</label><input id="newCap" type="number" min="1" value="20" /></div>
+      <div><label>Capacity</label><input id="newCap" type="number" min="1" value="26" /></div>
     </div>
     <label style="margin-top:12px;">Note (optional)</label>
     <input id="newNote" placeholder="optional" />
     <div class="row" style="margin-top:10px;">
-      <label class="chip"><input type="checkbox" id="newIsOpen" checked> 設為開放 / Open</label>
+      <label class="chip"><input type="checkbox" id="newIsOpen" checked> 設為開放 / Open = TRUE</label>
       <label class="chip"><input type="checkbox" id="newOnlyOpen"> 設為唯一開放（關閉其他場次）</label>
       <button id="btnCreateSession" style="width:auto;">建立場次 / Create</button>
     </div>
@@ -66,7 +66,7 @@
         </select>
       </div>
       <div><label>預設球場 Venue</label><input id="genVenue" value="Goodminton" /></div>
-      <div><label>Capacity</label><input id="genCap" type="number" min="1" value="20" /></div>
+      <div><label>Capacity</label><input id="genCap" type="number" min="1" value="26" /></div>
     </div>
     <div class="row" style="margin-top:10px;">
       <label class="chip"><input type="checkbox" id="genOpenOnly"> 設為唯一開放（關閉其他場次）</label>
@@ -83,14 +83,13 @@
   </section>
 
   <section class="card">
-    <h2>Bookings（包括後補）</h2>
+    <h2>Bookings</h2>
     <div class="row">
       <select id="rsvpSession" style="flex:1;"></select>
       <select id="rsvpFilter" style="width:auto;">
         <option value="ALL">ALL</option>
         <option value="CONFIRMED">CONFIRMED</option>
-        <option value="WAITLIST">WAITLIST</option>
-        <option value="NO">NO</option>
+                <option value="NO">NO</option>
       </select>
       <button id="btnLoadRsvps" class="alt" style="width:auto;">載入名單</button>
     </div>

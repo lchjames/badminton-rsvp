@@ -6,7 +6,7 @@
 */
 
 const API_BASE = "https://script.google.com/macros/s/AKfycbwLCg1vLgzeXwheEBWKzCl4YnLlQTmRYZyU8G-FSLJl5MZK4s2uJHDQLnYdwegOvZ5T/exec";
-const WAITLIST_LIMIT = 6;
+const WAITLIST_LIMIT = 0;
 
 const PSYCHO_LINES = [
   { zh:"「可能」唔會幫你留位；請揀「出席」或「缺席」。", en:"'Maybe' does not reserve a spot. Please choose YES or NO." },
@@ -114,17 +114,15 @@ function dedupeLatestByName(rows) {
 function allocateDisplay(rows, cap) {
   const yes = rows.filter(r => String(r.status||"").toUpperCase()==="YES");
   yes.sort((a,b)=>(a._ts||0)-(b._ts||0));
-  const confirmed=[]; const wait=[]; let used=0; let waitUsed=0;
+  const confirmed=[]; let used=0;
 
   for(const r of yes) {
     const pax = Math.max(1, Number(r.pax)||1);
     if(used + pax <= cap) {
       confirmed.push(r); used += pax;
-    } else if(waitUsed + pax <= WAITLIST_LIMIT) {
-      wait.push(r); waitUsed += pax;
     }
   }
-  return {confirmed, wait, used, waitUsed};
+  return {confirmed, wait: [], used, waitUsed: 0};
 }
 
 async function loadList(sessionId) {
@@ -136,15 +134,13 @@ async function loadList(sessionId) {
   const b = allocateDisplay(rows, cap);
 
   el("summary").textContent = `名額：${b.used}/${cap}（尚餘 ${Math.max(0,cap-b.used)}） · Confirmed: ${b.used}/${cap} (Remaining ${Math.max(0,cap-b.used)})`;
-  el("waitSummary").textContent = `候補：${b.waitUsed}/${WAITLIST_LIMIT}（尚餘 ${Math.max(0,WAITLIST_LIMIT-b.waitUsed)}） · Waitlist: ${b.waitUsed}/${WAITLIST_LIMIT} (Remaining ${Math.max(0,WAITLIST_LIMIT-b.waitUsed)})`;
+  if (el("waitSummary")) el("waitSummary").textContent = "";
 
   el("list").innerHTML = b.confirmed.length
     ? "<ul>"+b.confirmed.map(r=>`<li>${esc(r.name)} <span class="muted">(${esc(r.pax||1)})</span></li>`).join("")+"</ul>"
     : "<div class='muted'>暫時無出席 / No confirmed attendees</div>";
 
-  el("waitList").innerHTML = b.wait.length
-    ? "<ul>"+b.wait.map(r=>`<li>${esc(r.name)} <span class="muted">(${esc(r.pax||1)})</span></li>`).join("")+"</ul>"
-    : "<div class='muted'>暫時無候補 / No one on waitlist</div>";
+  if (el("waitList")) el("waitList").innerHTML = "";
 }
 
 function selectedStatus() {
@@ -189,9 +185,9 @@ async function onSubmit(ev) {
   } else if(placement === "CONFIRMED") {
     setText("msg","你已成功報名出席 / Successfully registered.");
   } else if(placement === "WAITLIST") {
-    setText("msg","你已進入候補名單 / You are on the waitlist.");
+    setText("msg","名額已滿 / Session is full.");
   } else if(placement === "OVERFLOW") {
-    setText("msg","已記錄，但已超出候補上限 / Recorded but overflowed waitlist.");
+    setText("msg","名額已滿 / Session is full.");
   } else {
     setText("msg","已更新 / Updated.");
   }

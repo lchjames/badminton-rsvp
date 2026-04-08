@@ -9,7 +9,7 @@ function safeCall_(fn, ...args){
 
 // assets/admin.js
 const API_BASE = "https://script.google.com/macros/s/AKfycbwLCg1vLgzeXwheEBWKzCl4YnLlQTmRYZyU8G-FSLJl5MZK4s2uJHDQLnYdwegOvZ5T/exec";
-const WAITLIST_LIMIT = 6;
+const WAITLIST_LIMIT = 0;
 
 const el=(id)=>document.getElementById(id);
 let sessions=[];
@@ -129,7 +129,7 @@ function renderSessionsTable(){
               start:normalizeTimeHHMM(get("start")),
               end:normalizeTimeHHMM(get("end")),
               venue:get("venue").trim(),
-              capacity:Number(get("capacity")||20)||20,
+              capacity:Number(get("capacity")||26)||26,
               note:get("note").trim(),
               isOpen:String(get("isOpen")).toUpperCase()==="TRUE"
             };
@@ -173,7 +173,7 @@ async function createSession(){
     start:normalizeTimeHHMM(el("newStart").value.trim()||"17:00"),
     end:normalizeTimeHHMM(el("newEnd").value.trim()||"19:00"),
     venue:el("newVenue").value.trim(),
-    capacity:Number(el("newCap").value||20)||20,
+    capacity:Number(el("newCap").value||26)||26,
     note:el("newNote").value.trim(),
     isOpen:el("newIsOpen").checked
   };
@@ -208,7 +208,7 @@ async function loadRsvps(){
   const placementZh = (p)=>{
     p=String(p||"").toUpperCase();
     if(p==="CONFIRMED") return "成功報名";
-    if(p==="WAITLIST") return "候補";
+    if(p==="WAITLIST") return "已滿";
     if(p==="NO") return "缺席";
     return p;
   };
@@ -263,7 +263,7 @@ async function generateSundays_(){
   const weeks = Number(el("genWeeks").value||8)||8;
   const venue = (el("genVenue").value||"").trim();
   if(!venue) throw new Error("請填預設 Venue");
-  const cap = Number(el("genCap").value||20)||20;
+  const cap = Number(el("genCap").value||26)||26;
   const openOnly = el("genOpenOnly").checked;
 
   let created=0;
@@ -337,32 +337,16 @@ async function buildAnnouncement_(){
   const start = normalizeTimeHHMM(s.start);
   const end = normalizeTimeHHMM(s.end);
   const venue = String(s.venue||"").trim();
-  const title = String(s.title||"YR Badminton").trim() || "YR Badminton";
   const link = `${location.origin}${location.pathname.replace(/admin\.html.*$/,'index.html')}`;
 
-  const zh = [];
-  zh.push(`📢 ${title} 打波登記 / RSVP`);
-  zh.push(`🗓️ ${date} (Sun) ${start}-${end}`);
-  zh.push(`📍 ${venue}`);
-  zh.push("");
-  zh.push("");
-  zh.push("請到以下連結更新出席狀態：");
-  zh.push(link);
-  zh.push("");
-  zh.push("Status：出席 / 缺席");
+  return `📢 YR Badminton 打波登記 / RSVP
+🗓️ ${date} (Sun) ${start}-${end}
+📍 ${venue}
 
-  const en = [];
-  en.push(`📢 ${title} RSVP`);
-  en.push(`🗓️ ${date} (Sun) ${start}-${end}`);
-  en.push(`📍 ${venue}`);
-  en.push("");
-  en.push("");
-  en.push("Please update your status via:");
-  en.push(link);
-  en.push("");
-  en.push("Status: YES / NO");
+Please update your status via:
+${link}
 
-  return zh.join("\n") + "\n\n--------------------\n\n" + en.join("\n");
+Status: YES / NO`;
 }
 
 async function updateAnnounceSummary_(){
@@ -378,15 +362,9 @@ async function updateAnnounceSummary_(){
 
   const cap = Number(data.summary?.cap||0)||0;
   const confirmedPax = Number(data.summary?.confirmedPax||0)||0;
-  const waitPax = Number(data.summary?.waitlistPax||0)||0;
-  const waitLimit = Number(data.summary?.waitLimit||WAITLIST_LIMIT)||WAITLIST_LIMIT;
+  const remain = Math.max(0, cap-confirmedPax);
 
-  const remain = cap ? Math.max(0, cap-confirmedPax) : null;
-  const waitRemain = Math.max(0, waitLimit-waitPax);
-
-  box.textContent =
-    `人數摘要：成功報名 ${confirmedPax}/${cap||"-"}（剩餘 ${cap?remain:"-"}）｜候補 ${waitPax}/${waitLimit}（剩餘 ${waitRemain}）  /  ` +
-    `Summary: Confirmed ${confirmedPax}/${cap||"-"} (rem ${cap?remain:"-"}) | Waitlist ${waitPax}/${waitLimit} (rem ${waitRemain})`;
+  box.textContent = `人數摘要：成功報名 ${confirmedPax}/${cap||"-"}（剩餘 ${remain}）  /  Summary: Confirmed ${confirmedPax}/${cap||"-"} (Remaining ${remain})`;
 }
 
 async function doAnnounce_(){

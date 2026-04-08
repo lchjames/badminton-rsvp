@@ -2,7 +2,7 @@ const SPREADSHEET_ID = "1WAAWlRoyyYoq6B_cKBDaJBO_WS-YKjpnAYWMKlnk98w";
 const SHEET_SESSIONS = "sessions";
 const SHEET_RSVPS = "rsvps";
 const ADMIN_KEY = "JamesIsTheBest";
-const WAITLIST_LIMIT = 6;
+const WAITLIST_LIMIT = 0;
 
 function doGet(e) {
   try {
@@ -305,12 +305,12 @@ function addRsvp_(p) {
   if (!session) return { ok:false, error:"session not found" };
   const cap = Number(session.capacity||0)||0;
 
-  // Check capacity +候補名額（只針對 YES）
+  // Check capacity (no waiting list; full means full)
   if (statusRaw==="YES") {
     const check = computeBucketsWithOverride_(sessionId, name, statusRaw, pax, cap, WAITLIST_LIMIT);
     const key = String(name||"").trim().toLowerCase();
     const placement = check.placementByKey[key];
-    if (placement === "OVERFLOW") return { ok:false, error:"full" };
+    if (placement === "OVERFLOW" || placement === "WAITLIST") return { ok:false, error:"full" };
   }
 
   const sh = openSheet_(SHEET_RSVPS);
@@ -355,13 +355,13 @@ function setAllOpen_(open) {
 
 function adminCreateSession_(p) {
   if (!isAdmin_(p.adminKey)) return { ok:false, error:"unauthorized" };
-  const s = p.session || {};
+  const s = p.session || p || {};
   const title = String(s.title||"YR Badminton").trim() || "YR Badminton";
   const date = String(s.date||"").trim();
   const start = String(s.start||"17:00").trim() || "17:00";
   const end = String(s.end||"19:00").trim() || "19:00";
   const venue = String(s.venue||"").trim();
-  const capacity = Number(s.capacity||20)||20;
+  const capacity = Number(s.capacity||26)||26;
   const note = String(s.note||"").trim();
   const isOpen = (s.isOpen===true) || asBool_(s.isOpen);
 
