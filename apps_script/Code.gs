@@ -1,3 +1,23 @@
+
+// ===== Cache helpers =====
+const CACHE_SECONDS_SESSIONS = 60;
+const CACHE_SECONDS_RSVP = 10;
+
+function cacheGetJson_(key){
+  const c = CacheService.getScriptCache().get(key);
+  return c ? JSON.parse(c) : null;
+}
+
+function cachePutJson_(key, obj, seconds){
+  CacheService.getScriptCache()
+    .put(key, JSON.stringify(obj), seconds);
+}
+
+function clearRsvpCache_(){
+  const cache = CacheService.getScriptCache();
+  cache.remove("sessions_cache");
+}
+
 const SPREADSHEET_ID = "1WAAWlRoyyYoq6B_cKBDaJBO_WS-YKjpnAYWMKlnk98w";
 const SHEET_SESSIONS = "sessions";
 const SHEET_RSVPS = "rsvps";
@@ -7,7 +27,13 @@ const WAITLIST_LIMIT = 0;
 function doGet(e) {
   try {
     const action = String((e && e.parameter && e.parameter.action) || "").toLowerCase();
-    if (action === "sessions") return json_({ ok:true, sessions:getSessions_() });
+    if (action === "sessions") {
+      const cached = cacheGetJson_("sessions_cache");
+      if (cached) return json_({ ok:true, sessions:cached });
+      const data = getSessions_();
+      cachePutJson_("sessions_cache", data, CACHE_SECONDS_SESSIONS);
+      return json_({ ok:true, sessions:data });
+    }
     if (action === "list") return json_(getRsvpsPublic_((e.parameter||{}).sessionId));
     return json_({ ok:false, error:"unknown action" });
   } catch (err) {
@@ -161,7 +187,8 @@ function getRsvpsPublic_(sessionId) {
 
   const sh = openSheet_(SHEET_RSVPS);
   const values = sh.getDataRange().getValues();
-  if (values.length < 2) return { ok:true, rsvps: [], current: [], summary:{ cap:cap, confirmedPax:0, waitlistPax:0 } };
+  if (values.length < 2) clearRsvpCache_();
+    return { ok:true, rsvps: [], current: [], summary:{ cap:cap, confirmedPax:0, waitlistPax:0 } };
   const [header, ...rows] = values;
   const idx = index_(header);
   const out = rows.filter(r=>String(r[idx.sessionId])===sessionId).map(r=>({
@@ -182,7 +209,8 @@ function getRsvpsPublic_(sessionId) {
     current.push({ name:r.name, pax:r.pax, status:r.status, timestamp:r.ts, note:r.note, placement });
   }
   // only keep latest items (current state)
-  return { ok:true, rsvps: out, current: current, summary:{ cap:cap, confirmedPax:buckets.totals.yesPax, waitlistPax:buckets.totals.waitPax, waitLimit:WAITLIST_LIMIT } };
+  clearRsvpCache_();
+    return { ok:true, rsvps: out, current: current, summary:{ cap:cap, confirmedPax:buckets.totals.yesPax, waitlistPax:buckets.totals.waitPax, waitLimit:WAITLIST_LIMIT } };
 }
 
 function computeTotalsWithOverride_(sessionId, nameOverride, statusOverride, paxOverride) {
@@ -320,9 +348,11 @@ function addRsvp_(p) {
     const after = computeBuckets_(sessionId, cap, WAITLIST_LIMIT);
     const key = String(name||"").trim().toLowerCase();
     const placement = after.placementByKey[key] || "CONFIRMED";
+    clearRsvpCache_();
     return { ok:true, placement: placement };
   }
-  return { ok:true, placement: "NO" };
+  clearRsvpCache_();
+    return { ok:true, placement: "NO" };
 }
 
 // --- Admin create session / court ---
@@ -373,7 +403,8 @@ function adminCreateSession_(p) {
   const sh = openSheet_(SHEET_SESSIONS);
   const sessionId = generateUniqueSessionId_(date, start, venue);
   appendRowAsText_(sh, [sessionId, title, date, start, end, venue, String(capacity), note, isOpen ? "TRUE":"FALSE"]);
-  return { ok:true, sessionId };
+  clearRsvpCache_();
+    return { ok:true, sessionId };
 }
 
 function adminUpdateSession_(p) {
@@ -397,7 +428,8 @@ function adminUpdateSession_(p) {
       sh.getRange(rowNumber, idx.capacity+1).setNumberFormat("@").setValue(String(Number(s.capacity||20)||20));
       sh.getRange(rowNumber, idx.note+1).setValue(String(s.note||""));
       sh.getRange(rowNumber, idx.isOpen+1).setValue(s.isOpen ? "TRUE":"FALSE");
-      return { ok:true };
+      clearRsvpCache_();
+    return { ok:true };
     }
   }
   return { ok:false, error:"session not found" };
@@ -415,7 +447,8 @@ function adminSetOnlyOpen_(p) {
     const isTarget = String(rows[i][idx.sessionId])===targetId;
     sh.getRange(i+2, idx.isOpen+1).setValue(isTarget ? "TRUE":"FALSE");
   }
-  return { ok:true };
+  clearRsvpCache_();
+    return { ok:true };
 }
 
 function adminListRsvps_(p) {
@@ -428,7 +461,8 @@ function adminListRsvps_(p) {
 
   const sh=openSheet_(SHEET_RSVPS);
   const values=sh.getDataRange().getValues();
-  if(values.length<2) return { ok:true, rsvps: [], current: [], summary:{ cap:cap, confirmedPax:0, waitlistPax:0 } };
+  if(values.length<2) clearRsvpCache_();
+    return { ok:true, rsvps: [], current: [], summary:{ cap:cap, confirmedPax:0, waitlistPax:0 } };
   const [header, ...rows]=values;
   const idx=index_(header);
 
@@ -456,7 +490,8 @@ function adminListRsvps_(p) {
     current.push({ name:r.name, pax:r.pax, status:r.status, timestamp:r.ts, note:r.note, placement });
   }
 
-  return { ok:true, rsvps: out, current: current, summary:{ cap:cap, confirmedPax:buckets.totals.yesPax, waitlistPax:buckets.totals.waitPax, waitLimit:WAITLIST_LIMIT } };
+  clearRsvpCache_();
+    return { ok:true, rsvps: out, current: current, summary:{ cap:cap, confirmedPax:buckets.totals.yesPax, waitlistPax:buckets.totals.waitPax, waitLimit:WAITLIST_LIMIT } };
 }
 
 
@@ -494,7 +529,8 @@ function adminDeleteSession_(p) {
       }
     }
   }
-  return { ok:true };
+  clearRsvpCache_();
+    return { ok:true };
 }
 
 

@@ -29,3 +29,17 @@ instead of appending a new row. This prevents having both YES and NO records for
 - User page shows confirmed count only.
 - Admin announcement uses simple RSVP format (no summary lines).
 - To set a section open/closed: use **Open = TRUE/FALSE** in the sessions table, or set **Open = TRUE** when creating a new section.
+
+
+## Domain Migration
+
+User URL:
+https://lchjames.com/badminton-rsvp/
+
+The root domain can continue hosting other pages.
+The badminton project should live under the /badminton-rsvp/ path.
+
+## Performance
+
+Google Sheet remains the data source.
+Apps Script CacheService is used to reduce repeated spreadsheet reads.
